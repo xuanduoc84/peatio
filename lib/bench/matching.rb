@@ -95,6 +95,10 @@ module Bench
       end
     end
 
+    def matching_is_running?
+      matching_queue_status[:consumers].positive?
+    end
+
     # TODO: Implement method for saving report to file.
     # File path should be configured from config.
     def save_report
