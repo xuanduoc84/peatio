@@ -1,7 +1,7 @@
 # Peatio User API v2
 API for Peatio application.
 
-## Version: 2.1.9
+## Version: 2.1.14
 
 **Contact information:**  
 peatio.tech  
@@ -361,6 +361,7 @@ Creates new crypto withdrawal.
 | rid | formData | Wallet address on the Blockchain. | Yes | string |
 | currency | formData | The currency code. | Yes | string |
 | amount | formData | The amount to withdraw. | Yes | double |
+| note | formData | Optional metadata to be applied to the transaction. Used to tag transactions with memorable comments. | No | string |
 
 ##### Responses
 
@@ -401,7 +402,8 @@ Get your executed trades. Trades are sorted in reverse creation order.
 | market | query |  | No | string |
 | limit | query | Limit the number of returned trades. Default to 100. | No | integer |
 | page | query | Specify the page of paginated results. | No | integer |
-| timestamp | query | An integer represents the seconds elapsed since Unix epoch.If set, only trades executed before the time will be returned. | No | integer |
+| time_from | query | An integer represents the seconds elapsed since Unix epoch.If set, only trades executed after the time will be returned. | No | integer |
+| time_to | query | An integer represents the seconds elapsed since Unix epoch.If set, only trades executed before the time will be returned. | No | integer |
 | order_by | query | If set, returned trades will be sorted in specific order, default to 'desc'. | No | string |
 
 ##### Responses
@@ -643,6 +645,7 @@ List your withdraws as paginated collection.
 | rid | string | The beneficiary ID or wallet address on the Blockchain. | No |
 | state | string | The withdrawal state. | No |
 | confirmations | integer | Number of confirmations. | No |
+| note | string | Withdraw note. | No |
 | created_at | string | The datetimes for the withdrawal. | No |
 | updated_at | string | The datetimes for the withdrawal. | No |
 | done_at | string | The datetime when withdraw was completed | No |

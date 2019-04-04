@@ -40,7 +40,7 @@ describe API::V2::Account::Withdraws, type: :request do
       api_get '/api/v2/account/withdraws', params: { limit: 100 }, token: token
       result = JSON.parse(response.body)
 
-      expect(response).to be_success
+      expect(response).to be_successful
       expect(response.headers.fetch('Total')).to eq '40'
       expect(result.map { |x| x['currency'] }.uniq.sort).to eq %w[ btc usd ]
     end
@@ -49,7 +49,7 @@ describe API::V2::Account::Withdraws, type: :request do
       api_get '/api/v2/account/withdraws', params: { currency: 'BTC', limit: 100 }, token: token
       result = JSON.parse(response.body)
 
-      expect(response).to be_success
+      expect(response).to be_successful
       expect(response.headers.fetch('Total')).to eq '20'
       expect(result.map { |x| x['currency'] }.uniq.sort).to eq %w[ btc ]
     end
@@ -60,14 +60,14 @@ describe API::V2::Account::Withdraws, type: :request do
       api_get '/api/v2/account/withdraws', params: { currency: 'BTC', limit: 10, page: 1 }, token: token
       result = JSON.parse(response.body)
 
-      expect(response).to be_success
+      expect(response).to be_successful
       expect(response.headers.fetch('Total')).to eq '20'
       expect(result.first['id']).to eq ordered_withdraws[0].id
 
       api_get '/api/v2/account/withdraws', params: { currency: 'BTC', limit: 10, page: 2 }, token: token
       result = JSON.parse(response.body)
 
-      expect(response).to be_success
+      expect(response).to be_successful
       expect(response.headers.fetch('Total')).to eq '20'
       expect(result.first['id']).to eq ordered_withdraws[10].id
     end
@@ -76,7 +76,7 @@ describe API::V2::Account::Withdraws, type: :request do
       ordered_withdraws = btc_withdraws.sort_by(&:id).reverse
 
       api_get '/api/v2/account/withdraws', params: { currency: 'BTC', limit: 100 }, token: token
-      expect(response).to be_success
+      expect(response).to be_successful
       result = JSON.parse(response.body)
 
       expect(result.map { |x| x['id'] }).to eq ordered_withdraws.map(&:id)
@@ -101,6 +101,7 @@ describe API::V2::Account::Withdraws, type: :request do
     end
     let(:account) { member.accounts.with_currency(currency).first }
     let(:balance) { 1.2 }
+    let(:long_note) { (0...257).map { (65 + rand(26)).chr }.join }
     before { account.plus_funds(balance) }
     before { Vault::TOTP.stubs(:validate?).returns(true) }
 
@@ -211,6 +212,23 @@ describe API::V2::Account::Withdraws, type: :request do
         expect(record.account).to eq account
         expect(record.account.balance).to eq(1.2 - amount)
         expect(record.account.locked).to eq amount
+      end
+
+      it 'creates new withdraw with note' do
+        api_post '/api/v2/account/withdraws', params: data.merge(note: 'Test note'), token: token
+        expect(response).to have_http_status(201)
+
+        result = JSON.parse(response.body)
+        expect(result['note']).to eq 'Test note'
+
+        record = Withdraw.last
+        expect(record.note).to eq 'Test note'
+      end
+
+      it 'doesnt create new withdraw with too long note' do
+        api_post '/api/v2/account/withdraws', params: data.merge(note: long_note), token: token
+        expect(response).to have_http_status(422)
+        expect(response).to include_api_error('account.withdraw.too_long_note')
       end
     end
   end

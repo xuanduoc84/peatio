@@ -44,7 +44,7 @@ describe API::V2::Market::Orders, type: :request do
       api_get '/api/v2/market/orders', token: token
       result = JSON.parse(response.body)
 
-      expect(response).to be_success
+      expect(response).to be_successful
       expect(response.headers.fetch('Total')).to eq '5'
       expect(result.size).to eq 5
     end
@@ -53,7 +53,7 @@ describe API::V2::Market::Orders, type: :request do
       api_get '/api/v2/market/orders', params: { market: 'btcusd' }, token: token
       result = JSON.parse(response.body)
 
-      expect(response).to be_success
+      expect(response).to be_successful
       expect(response.headers.fetch('Total')).to eq '4'
       expect(result.size).to eq 4
     end
@@ -62,7 +62,7 @@ describe API::V2::Market::Orders, type: :request do
       api_get '/api/v2/market/orders', params: { market: 'btcusd', state: Order::DONE }, token: token
       result = JSON.parse(response.body)
 
-      expect(response).to be_success
+      expect(response).to be_successful
       expect(response.headers.fetch('Total')).to eq '1'
       expect(result.size).to eq 1
       expect(result.first['state']).to eq Order::DONE
@@ -72,14 +72,14 @@ describe API::V2::Market::Orders, type: :request do
       api_get '/api/v2/market/orders', params: { market: 'btcusd', limit: 1, page: 1 }, token: token
       result = JSON.parse(response.body)
 
-      expect(response).to be_success
+      expect(response).to be_successful
       expect(response.headers.fetch('Total')).to eq '4'
       expect(result.first['price']).to eq '13.0'
 
       api_get '/api/v2/market/orders', params: { market: 'btcusd', limit: 1, page: 2 }, token: token
       result = JSON.parse(response.body)
 
-      expect(response).to be_success
+      expect(response).to be_successful
       expect(response.headers.fetch('Total')).to eq '4'
       expect(result.first['price']).to eq '11.0'
     end
@@ -88,7 +88,7 @@ describe API::V2::Market::Orders, type: :request do
       api_get '/api/v2/market/orders', params: { market: 'btcusd', order_by: 'asc' }, token: token
       result = JSON.parse(response.body)
 
-      expect(response).to be_success
+      expect(response).to be_successful
 
       first_order_updated_at = Time.iso8601(result.first['updated_at'])
       second_order_updated_at = Time.iso8601(result.second['updated_at'])
@@ -97,7 +97,7 @@ describe API::V2::Market::Orders, type: :request do
       api_get '/api/v2/market/orders', params: { market: 'btcusd', order_by: 'desc' }, token: token
       result = JSON.parse(response.body)
 
-      expect(response).to be_success
+      expect(response).to be_successful
 
       first_order_updated_at = Time.iso8601(result.first['updated_at'])
       second_order_updated_at = Time.iso8601(result.second['updated_at'])
@@ -117,7 +117,7 @@ describe API::V2::Market::Orders, type: :request do
 
     it 'should get specified order' do
       api_get "/api/v2/market/orders/#{order.id}", token: token
-      expect(response).to be_success
+      expect(response).to be_successful
 
       result = JSON.parse(response.body)
       expect(result['id']).to eq order.id
@@ -147,7 +147,7 @@ describe API::V2::Market::Orders, type: :request do
 
       expect do
         api_post '/api/v2/market/orders', token: token, params: { market: 'btcusd', side: 'sell', volume: '12.13', price: '2014' }
-        expect(response).to be_success
+        expect(response).to be_successful
         expect(JSON.parse(response.body)['id']).to eq OrderAsk.last.id
       end.to change(OrderAsk, :count).by(1)
     end
@@ -157,7 +157,7 @@ describe API::V2::Market::Orders, type: :request do
 
       expect do
         api_post '/api/v2/market/orders', token: token, params: { market: 'btcusd', side: 'buy', volume: '12.13', price: '2014' }
-        expect(response).to be_success
+        expect(response).to be_successful
         expect(JSON.parse(response.body)['id']).to eq OrderBid.last.id
       end.to change(OrderBid, :count).by(1)
     end
@@ -187,6 +187,7 @@ describe API::V2::Market::Orders, type: :request do
     end
 
     it 'validates volume greater than min_ask_amount' do
+      member.get_account(:btc).update_attributes(balance: 1)
       m = Market.find(:btcusd)
       m.update(min_ask_amount: 1.0)
       api_post '/api/v2/market/orders', token: token, params: { market: 'btcusd', side: 'sell', volume: '0.1', price: '2014' }
@@ -195,6 +196,7 @@ describe API::V2::Market::Orders, type: :request do
     end
 
     it 'validates price less than max_bid_price' do
+      member.get_account(:usd).update_attributes(balance: 1)
       m = Market.find(:btcusd)
       m.update(max_bid_price: 1.0)
       api_post '/api/v2/market/orders', token: token, params: { market: 'btcusd', side: 'buy', volume: '0.1', price: '2' }
@@ -224,6 +226,7 @@ describe API::V2::Market::Orders, type: :request do
 
     context 'market order' do
       it 'validates that market has sufficient volume' do
+        member.get_account(:btc).update_attributes(balance: 20)
         api_post '/api/v2/market/orders', token: token, params: { market: 'btcusd', side: 'sell', volume: '12.13', ord_type: 'market' }
         expect(response.code).to eq '422'
         expect(response).to include_api_error('market.order.insufficient_market_liquidity')
@@ -233,16 +236,6 @@ describe API::V2::Market::Orders, type: :request do
         api_post '/api/v2/market/orders', token: token, params: { market: 'btcusd', side: 'sell', volume: '0.5', price: '0.5', ord_type: 'market' }
         expect(response.code).to eq '422'
         expect(response).to include_api_error('market.order.market_order_price')
-      end
-
-      it 'validates that balance is sufficient' do
-        # Stub bids in order book so we can create ask market order.
-        Global.any_instance.expects(:bids).once.returns([[10.to_d, 10.to_d]])
-
-        api_post '/api/v2/market/orders', token: token, params: { market: 'btcusd', side: 'sell', volume: '1.0', ord_type: 'market' }
-
-        expect(response.code).to eq '422'
-        expect(response).to include_api_error('market.account.insufficient_balance')
       end
 
       it 'creates sell order' do
@@ -255,7 +248,7 @@ describe API::V2::Market::Orders, type: :request do
           api_post '/api/v2/market/orders', token: token, params: { market: 'btcusd', side: 'sell', volume: '0.5', ord_type: 'market' }
         end.to change(OrderAsk, :count).by(1)
 
-        expect(response).to be_success
+        expect(response).to be_successful
         expect(JSON.parse(response.body)['id']).to eq OrderAsk.last.id
       end
     end
@@ -273,7 +266,7 @@ describe API::V2::Market::Orders, type: :request do
         AMQPQueue.expects(:enqueue).with(:matching, action: 'cancel', order: order.to_matching_attributes)
         expect do
           api_post "/api/v2/market/orders/#{order.id}/cancel", token: token
-          expect(response).to be_success
+          expect(response).to be_successful
           expect(JSON.parse(response.body)['id']).to eq order.id
         end.not_to change(Order, :count)
       end
@@ -305,7 +298,7 @@ describe API::V2::Market::Orders, type: :request do
 
       expect do
         api_post '/api/v2/market/orders/cancel', token: token
-        expect(response).to be_success
+        expect(response).to be_successful
 
         result = JSON.parse(response.body)
         expect(result.size).to eq 3
@@ -319,7 +312,7 @@ describe API::V2::Market::Orders, type: :request do
 
       expect do
         api_post '/api/v2/market/orders/cancel', token: token, params: { market: 'dashbtc' }
-        expect(response).to be_success
+        expect(response).to be_successful
 
         result = JSON.parse(response.body)
         expect(result.size).to eq 1
@@ -333,7 +326,7 @@ describe API::V2::Market::Orders, type: :request do
 
       expect do
         api_post '/api/v2/market/orders/cancel', token: token, params: { side: 'sell' }
-        expect(response).to be_success
+        expect(response).to be_successful
 
         result = JSON.parse(response.body)
         expect(result.size).to eq 1
