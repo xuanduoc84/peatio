@@ -12,7 +12,7 @@ env:
     DISPLAY=:0.0
     BOT_USERNAME=kite-bot
     BOT_NAME="Kite Bot"
-    BOT_EMAIL=kite-bot@heliostech.fr
+    BOT_EMAIL=admin@kensoft.co
     BULLET="true"
 
 services:
@@ -40,7 +40,7 @@ before_script:
 # Execute all of the commands which should make the build pass or fail.
 script:
   URL_HOST=peatio.tech LOG_LEVEL=warn bundle exec rspec &&
-  docker build --tag rubykube/peatio:latest --target base .
+  docker build --tag xuanduoc84/peatio:KenEx --target base .
 
 # Execute all of the commands which need to be executed after the build passed.
 after_success: bundle exec rake release:travis
