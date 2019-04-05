@@ -30,7 +30,7 @@ services:
     ports:
       - "8005:8005"
     environment:
-      DUMMY_USER_EMAIL: "admin@barong.io"
+      DUMMY_USER_EMAIL: "admin@kensoft.co"
       DUMMY_USER_UID: "U123456789"
       DUMMY_USER_ROLE: "admin"
       DUMMY_USER_LEVEL: 3
@@ -65,7 +65,7 @@ services:
     environment:
       SKIP_SETCAP: 1
       VAULT_TOKEN: ${VAULT_TOKEN}
-      VAULT_DEV_ROOT_TOKEN_ID: changeme
+      VAULT_DEV_ROOT_TOKEN_ID: root_kensoft
       VAULT_ADDR: http://vault:8200
 
 volumes:
