@@ -14,6 +14,12 @@ module API
           end
         end
 
+        def set_ets_context!
+          Raven.tags_context(
+            peatio_version: Peatio::Application::VERSION
+          ) if defined?(Raven)
+        end
+
         private
 
         def create_platform_operation!(attrs)
@@ -25,16 +31,28 @@ module API
                     .camelize
                     .constantize
 
+          if klass == ::Operations::Revenue && attrs.dig(:uid)
+            member_id = Member.find_by!(uid: attrs.fetch(:uid)).id
+          else
+            member_id = nil
+          end
+
           if attrs[:credit].present?
-            klass.credit!(amount: attrs.fetch(:credit),
-                          currency: currency,
-                          code: attrs.fetch(:code),
-                          reference: attrs[:reference])
+            klass.credit!({
+              amount: attrs.fetch(:credit),
+              currency: currency,
+              code: attrs.fetch(:code),
+              member_id: member_id,
+              reference: attrs[:reference]
+            }.compact)
           elsif attrs[:debit].present?
-            klass.debit!(amount: attrs.fetch(:debit),
-                         currency: currency,
-                         code: attrs.fetch(:code),
-                         reference: attrs[:reference])
+            klass.debit!({
+              amount: attrs.fetch(:debit),
+              currency: currency,
+              code: attrs.fetch(:code),
+              member_id: member_id,
+              reference: attrs[:reference]
+            }.compact)
           end
         end
 
@@ -86,19 +104,19 @@ module API
         # @deprecated
         def credit_legacy_balance!(amount:, member:, currency:, account:)
           if account.kind.main?
-            member.ac(currency).plus_funds(amount)
+            member.get_account(currency).plus_funds(amount)
           elsif account.kind.locked?
-            member.ac(currency).plus_funds(amount)
-            member.ac(currency).lock_funds(amount)
+            member.get_account(currency).plus_funds(amount)
+            member.get_account(currency).lock_funds(amount)
           end
         end
 
         # @deprecated
         def debit_legacy_balance!(amount:, member:, currency:, account:)
           if account.kind.main?
-            member.ac(currency).sub_funds(amount)
+            member.get_account(currency).sub_funds(amount)
           elsif account.kind.locked?
-            member.ac(currency).unlock_and_sub_funds(amount)
+            member.get_account(currency).unlock_and_sub_funds(amount)
           end
         end
       end

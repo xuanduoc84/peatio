@@ -7,6 +7,8 @@ require 'openssl'
 # This file is copied to spec/ when you run 'rails generate rspec:install'
 ENV['RAILS_ENV'] ||= 'test'
 ENV['EVENT_API_JWT_PRIVATE_KEY'] ||= Base64.urlsafe_encode64(OpenSSL::PKey::RSA.generate(2048).to_pem)
+ENV['PEATIO_JWT_PRIVATE_KEY'] ||= Base64.urlsafe_encode64(OpenSSL::PKey::RSA.generate(2048).to_pem)
+ENV['WITHDRAW_ADMIN_APPROVE'] = 'true'
 
 # We remove lib/peatio.rb from LOAD_PATH because of conflict with peatio gem.
 # lib/peatio.rb is added to LOAD_PATH later after requiring gems.
@@ -17,6 +19,7 @@ require File.expand_path('../../config/environment', __FILE__)
 require 'rspec/rails'
 require 'rspec/retry'
 require 'webmock/rspec'
+require 'cancan/matchers'
 
 WebMock.allow_net_connect!
 
@@ -27,6 +30,8 @@ Dir[Rails.root.join('spec/support/**/*.rb')].each { |f| require f }
 # Checks for pending migrations before tests are run.
 # If you are not using ActiveRecord, you can remove this line.
 ActiveRecord::Migration.check_pending! if defined?(ActiveRecord::Migration)
+
+Rails.application.load_tasks
 
 RSpec.configure do |config|
   # ## Mock Framework
@@ -75,16 +80,25 @@ RSpec.configure do |config|
     DatabaseCleaner.strategy = :truncation, { only: %w[orders trades] }
   end
 
+  config.append_after(:each) do
+    DatabaseCleaner.clean
+  end
+
   config.before(:each) do
     DatabaseCleaner.start
-    AMQPQueue.stubs(:publish)
+    AMQP::Queue.stubs(:publish)
     KlineDB.stubs(:kline).returns([])
-    %w[  eth-kovan eth-rinkeby btc-testnet dash-testnet ltc-testnet bch-testnet xrp-testnet ].each { |blockchain| FactoryBot.create(:blockchain, blockchain) }
-    %i[ usd btc dash eth xrp trst ring bch eur ltc ].each { |ccy| FactoryBot.create(:currency, ccy) }
-    %i[ eth_deposit eth_hot eth_fee peth_deposit peth_fee trst_deposit trst_hot ring_deposit ring_hot btc_hot btc_deposit bch_deposit bch_hot dash_deposit dash_hot ltc_deposit ltc_hot xrp_deposit xrp_hot peth_hot eth_warm ]
-        .each { |ccy| FactoryBot.create(:wallet, ccy) }
-    %i[ btcusd dashbtc btceth btcxrp ].each { |market| FactoryBot.create(:market, market) }
+    Currency.any_instance.stubs(:price).returns(1.to_d)
+    %w[eth-kovan eth-rinkeby btc-testnet].each { |blockchain| FactoryBot.create(:blockchain, blockchain) }
+    %i[usd eur btc eth trst ring].each { |ccy| FactoryBot.create(:currency, ccy) }
+
+    %i[ eth_deposit eth_hot eth_warm eth_fee
+        trst_deposit trst_hot
+        btc_hot btc_deposit ].each { |ccy| FactoryBot.create(:wallet, ccy) }
+    %i[btcusd btceth].each { |market| FactoryBot.create(:market, market) }
     %w[101 102 201 202 211 212 301 302 401 402].each { |ac_code| FactoryBot.create(:operations_account, ac_code)}
+    FactoryBot.create(:trading_fee, market_id: :any, group: :any, maker: 0.0015, taker: 0.0015)
+    FactoryBot.create(:withdraw_limit)
   end
 
   config.after(:each) do

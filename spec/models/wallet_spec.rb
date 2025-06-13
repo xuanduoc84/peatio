@@ -34,22 +34,38 @@ describe Wallet do
       expect(subject.errors.full_messages).to eq ['Kind is not included in the list']
     end
 
-    it 'validates nsig should be greater than or equal to 1' do
-      subject.nsig = 0
-      expect(subject).to_not be_valid
-      expect(subject.errors.full_messages).to eq ['Nsig must be greater than or equal to 1']
-    end
-
-    it 'validates structure of uri' do
-      subject.uri = 'Wrong URL'
-      expect(subject).to_not be_valid
-      expect(subject.errors.full_messages).to eq ['Uri is not a valid URL']
-    end
-
     it 'validates name uniqueness' do
       subject.name = Wallet.first.name
       expect(subject).to_not be_valid
       expect(subject.errors.full_messages).to eq ['Name has already been taken']
+    end
+
+    it 'saves settings in encrypted column' do
+      subject.save
+      expect {
+        subject.uri = 'http://geth:8545/'
+        subject.save
+      }.to change { subject.settings_encrypted }
+    end
+
+    it 'does not update settings_encrypted before model is saved' do
+      subject.save
+      expect {
+        subject.uri = 'http://geth:8545/'
+      }.not_to change { subject.settings_encrypted }
+    end
+
+    it 'updates setting fields' do
+      expect {
+        subject.uri = 'http://geth:8545/'
+      }.to change { subject.settings['uri'] }.to 'http://geth:8545/'
+    end
+
+    it 'long encrypted secret' do
+      expect {
+        subject.secret = Faker::String.random(1024)
+        subject.save!
+      }.to raise_error ActiveRecord::ValueTooLong
     end
   end
 end

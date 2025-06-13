@@ -53,7 +53,7 @@ module API
             type: Integer,
             desc: 'Number of deposit confirmations.'
           },
-          if: ->(deposit) { deposit.coin? }
+          if: ->(deposit) { deposit.currency.coin? }
         )
 
         expose(
@@ -64,6 +64,15 @@ module API
             desc: 'Deposit state.'
           }
         )
+
+        expose(
+          :transfer_type,
+          documentation: {
+              type: String,
+              desc: 'Deposit transfer type'
+          }
+        )
+
 
         expose(
           :created_at,
@@ -80,6 +89,13 @@ module API
           documentation: {
             type: String,
             desc: 'The datetime when deposit was completed..'
+          }
+        )
+        expose(
+          :tid,
+          documentation: {
+            type: String,
+            desc: 'The shared transaction ID'
           }
         )
       end

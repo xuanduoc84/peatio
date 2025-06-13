@@ -13,18 +13,27 @@ class Operation < ApplicationRecord
   validates :currency, :code, presence: true
 
   validate do
-    unless account.currency_type == currency&.type
+    errors.add(:account, 'account doesn\'t exist') unless account
+  end
+
+  validate do
+    unless account&.currency_type == currency&.type
       errors.add(:currency, 'type and account currency type don\'t match')
     end
   end
 
   validate do
-    unless account.type == self.class.operation_type
+    unless account&.type == self.class.operation_type
       errors.add(:base, 'Account type and operation type don\'t match')
     end
   end
 
   self.abstract_class = true
+
+  # Returns operation amount with sign.
+  def amount
+    credit.zero? ? -debit : credit
+  end
 
   class << self
     def operation_type

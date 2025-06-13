@@ -3,63 +3,77 @@
 
 FactoryBot.define do
   factory :market do
+    engine { create(:engine) }
     trait :btcusd do
-      id             { 'btcusd' }
-      ask_unit       { 'btc' }
-      bid_unit       { 'usd' }
-      ask_fee        { 0.0015 }
-      bid_fee        { 0.0015 }
-      ask_precision  { 4 }
-      bid_precision  { 4 }
-      min_ask_price  { 0.0 }
-      min_ask_amount { 0.0 }
-      min_bid_amount { 0.0 }
-      position       { 1 }
-      enabled        { true }
-    end
-
-    trait :dashbtc do
-      id              { 'dashbtc' }
-      ask_unit        { 'dash' }
-      bid_unit        { 'btc' }
-      ask_fee         { 0.0015 }
-      bid_fee         { 0.0015 }
-      ask_precision   { 4 }
-      bid_precision   { 4 }
-      min_ask_price   { 0.0 }
-      min_ask_amount  { 0.0 }
-      min_bid_amount  { 0.0 }
-      position        { 2 }
-      enabled         { true }
+      id                { 'btcusd' }
+      base_currency     { 'btc' }
+      quote_currency    { 'usd' }
+      amount_precision  { 8 }
+      price_precision   { 2 }
+      min_price         { 0.01 }
+      min_amount        { 0.00000001 }
+      position          { 1 }
+      state             { :enabled }
     end
 
     trait :btceth do
-      id             { 'btceth' }
-      ask_unit       { 'btc' }
-      bid_unit       { 'eth' }
-      ask_fee        { 0.0015 }
-      bid_fee        { 0.0015 }
-      ask_precision  { 4 }
-      bid_precision  { 4 }
-      min_ask_price  { 0.0 }
-      min_ask_amount { 0.0 }
-      min_bid_amount { 0.0 }
-      position       { 3 }
-      enabled        { true }
+      id                { 'btceth' }
+      base_currency     { 'btc' }
+      quote_currency    { 'eth' }
+      amount_precision  { 4 }
+      price_precision   { 6 }
+      min_price         { 0.000001 }
+      min_amount        { 0.0001 }
+      position          { 2 }
+      state             { :enabled }
     end
 
-    trait :btcxrp do
-      id             { 'btcxrp' }
-      ask_unit       { 'btc' }
-      bid_unit       { 'xrp' }
-      ask_fee        { 0.0015 }
-      bid_fee        { 0.0015 }
-      ask_precision  { 4 }
-      bid_precision  { 4 }
-      min_ask_amount { 0.0 }
-      min_bid_amount { 0.0 }
-      position       { 3 }
-      enabled        { true }
+    trait :btceur do
+      id                { 'btceur' }
+      base_currency     { 'btc' }
+      quote_currency    { 'eur' }
+      amount_precision  { 8 }
+      price_precision   { 2 }
+      min_price         { 0.01 }
+      min_amount        { 0.00000001 }
+      position          { 3 }
+      state             { :enabled }
+    end
+
+    trait :ethusd do
+      id                { 'ethusd' }
+      base_currency     { 'eth' }
+      quote_currency    { 'usd' }
+      amount_precision  { 6 }
+      price_precision   { 4 }
+      min_price         { 0.01 }
+      min_amount        { 0.0001 }
+      position          { 4 }
+      state             { :enabled }
+    end
+
+    trait :btctrst do
+      id                { 'btctrst' }
+      base_currency     { 'btc' }
+      quote_currency    { 'trst' }
+      amount_precision  { 6 }
+      price_precision   { 4 }
+      min_price         { 0.01 }
+      min_amount        { 0.0001 }
+      position          { 5 }
+      state             { :enabled }
+    end
+
+    trait :xagm_cxusd do
+      id                { 'xagm.cxusd' }
+      base_currency     { 'xagm.cx' }
+      quote_currency    { 'usd' }
+      amount_precision  { 6 }
+      price_precision   { 4 }
+      min_price         { 0.01 }
+      min_amount        { 0.0001 }
+      position          { 4 }
+      state             { :enabled }
     end
   end
 end

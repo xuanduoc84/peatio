@@ -5,8 +5,9 @@ FactoryBot.define do
   factory :member do
     email { Faker::Internet.email }
     level { 0 }
-    uid { "U#{Faker::Number.number(9)}" }
+    uid { "ID#{Faker::Number.unique.hexadecimal(10)}".upcase }
     role { "member" }
+    group { "vip-0" }
     state { "active" }
 
     trait :level_3 do

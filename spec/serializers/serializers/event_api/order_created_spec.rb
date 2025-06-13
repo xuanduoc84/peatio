@@ -25,8 +25,8 @@ describe Serializers::EventAPI::OrderCreated do
   let(:created_at) { Time.current }
 
   before do
-    buyer.ac(:btc).plus_funds('100.0'.to_d)
-    buyer.ac(:btc).lock_funds('100.0'.to_d)
+    buyer.get_account(:btc).plus_funds('100.0'.to_d)
+    buyer.get_account(:btc).lock_funds('100.0'.to_d)
   end
 
   before { OrderBid.any_instance.expects(:created_at).returns(created_at).at_least_once }
@@ -40,7 +40,8 @@ describe Serializers::EventAPI::OrderCreated do
       trader_uid:             buyer.uid,
       income_unit:            'btc',
       income_fee_type:        'relative',
-      income_fee_value:       '0.0015',
+      income_maker_fee_value:  '0.0015',
+      income_taker_fee_value:  '0.0015',
       outcome_unit:           'usd',
       outcome_fee_type:       'relative',
       outcome_fee_value:      '0.0',

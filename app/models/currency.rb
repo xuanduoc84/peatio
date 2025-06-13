@@ -3,28 +3,67 @@
 
 class Currency < ApplicationRecord
 
-  DEFAULT_OPTIONS_SCHEMA = {
-    erc20_contract_address: {
-      title: 'ERC20 Contract Address',
-      type: 'string'
-    }
-  }
+  # == Constants ============================================================
+
   OPTIONS_ATTRIBUTES = %i[erc20_contract_address gas_limit gas_price].freeze
-  store :options, accessors: OPTIONS_ATTRIBUTES, coder: JSON
+  TOP_POSITION = 1
+
+  # == Attributes ===========================================================
+
+  attr_readonly :id,
+                :type,
+                :base_factor
+
+  # Code is aliased to id because it's more user-friendly primary key.
+  # It's preferred to use code where this attributes are equal.
+  alias_attribute :code, :id
+
+  # == Extensions ===========================================================
+
+  serialize :options, JSON unless Rails.configuration.database_support_json
+
+  include Helpers::ReorderPosition
+
+  OPTIONS_ATTRIBUTES.each do |attribute|
+    define_method attribute do
+      self.options[attribute.to_s]
+    end
+
+    define_method "#{attribute}=".to_sym do |value|
+      self.options = options.merge(attribute.to_s => value)
+    end
+  end
+
+  # == Relationships ========================================================
 
   belongs_to :blockchain, foreign_key: :blockchain_key, primary_key: :key
+  has_and_belongs_to_many :wallets
 
-  # NOTE: type column reserved for STI
-  self.inheritance_column = nil
+  has_one :parent, class_name: 'Currency', foreign_key: :id, primary_key: :parent_id
 
-  validates :id, presence: true, uniqueness: true
-  # TODO: Add specs to this validation.
-  validates :blockchain_key,
-            inclusion: { in: -> (_) { Blockchain.pluck(:key).map(&:to_s) } },
+  # == Validations ==========================================================
+
+  validate on: :create do
+    if ENV['MAX_CURRENCIES'].present? && Currency.count >= ENV['MAX_CURRENCIES'].to_i
+      errors.add(:max, 'Currency limit has been reached')
+    end
+  end
+
+  validates :code, presence: true, uniqueness: { case_sensitive: false }
+
+  validates :position,
+            presence: true,
+            numericality: { greater_than_or_equal_to: TOP_POSITION, only_integer: true }
+
+  validates :parent_id, allow_blank: true,
+            inclusion: { in: ->(_) { Currency.coins_without_tokens.pluck(:id).map(&:to_s) } },
             if: :coin?
 
-  validates :type, inclusion: { in: -> (_) { Currency.types.map(&:to_s) } }
-  validates :symbol, presence: true, length: { maximum: 1 }
+  validates :blockchain_key,
+            inclusion: { in: ->(_) { Blockchain.pluck(:key).map(&:to_s) } },
+            if: :coin?
+
+  validates :type, inclusion: { in: ->(_) { Currency.types.map(&:to_s) } }
   validates :options, length: { maximum: 1000 }
   validates :base_factor, numericality: { greater_than_or_equal_to: 1, only_integer: true }
 
@@ -35,42 +74,56 @@ class Currency < ApplicationRecord
             :min_withdraw_amount,
             :withdraw_limit_24h,
             :withdraw_limit_72h,
+            :precision,
             numericality: { greater_than_or_equal_to: 0 }
 
-  validate :validate_options
-  validate { errors.add(:base, 'Cannot disable display currency!') if disabled? && code == ENV.fetch('DISPLAY_CURRENCY').downcase }
+  # == Scopes ===============================================================
 
-  # TODO: Add specs to this validation.
-  validate :must_not_disable_all_markets, on: :update
+  scope :visible, -> { where(visible: true) }
+  scope :deposit_enabled, -> { where(deposit_enabled: true) }
+  scope :withdrawal_enabled, -> { where(withdrawal_enabled: true) }
+  scope :ordered, -> { order(position: :asc) }
+  scope :coins, -> { where(type: :coin) }
+  scope :fiats, -> { where(type: :fiat) }
+  # This scope select all coins without parent_id, which means that they are not tokens
+  scope :coins_without_tokens, -> { coins.where(parent_id: nil) }
 
-  before_validation :initialize_options
+  # == Callbacks ============================================================
+
+  after_initialize :initialize_defaults
+  after_create do
+    link_wallets
+    insert_position(self)
+  end
+
+  before_validation { self.code = code.downcase }
   before_validation { self.deposit_fee = 0 unless fiat? }
+  before_validation { self.blockchain_key = parent.blockchain_key if token? && blockchain_key.blank? }
+  before_validation(on: :create) { self.position = Currency.count + 1 unless position.present? }
 
   before_validation do
     self.erc20_contract_address = erc20_contract_address.try(:downcase) if erc20_contract_address.present?
   end
 
-  after_create { Member.find_each(&:touch_accounts) }
+  before_update { update_position(self) if position_changed? }
 
-  after_update :disable_markets
+  after_commit :wipe_cache
 
-  scope :enabled, -> { where(enabled: true) }
-  scope :ordered, -> { order(position: :asc) }
-  scope :coins,   -> { where(type: :coin) }
-  scope :fiats,   -> { where(type: :fiat) }
+  # == Class Methods ========================================================
 
-  delegate :explorer_transaction, :blockchain_api, :explorer_address, to: :blockchain
+  # NOTE: type column reserved for STI
+  self.inheritance_column = nil
 
   class << self
     def codes(options = {})
       pluck(:id).yield_self do |downcase_codes|
         case
-          when options.fetch(:bothcase, false)
-            downcase_codes + downcase_codes.map(&:upcase)
-          when options.fetch(:upcase, false)
-            downcase_codes.map(&:upcase)
-          else
-            downcase_codes
+        when options.fetch(:bothcase, false)
+          downcase_codes + downcase_codes.map(&:upcase)
+        when options.fetch(:upcase, false)
+          downcase_codes.map(&:upcase)
+        else
+          downcase_codes
         end
       end
     end
@@ -80,97 +133,94 @@ class Currency < ApplicationRecord
     end
   end
 
-  # Allows to dynamically check value of code:
-  #
-  #   code.btc? # true if code equals to "btc".
-  #   code.xrp? # true if code equals to "xrp".
-  #
-  def code
-    id&.inquiry
-  end
+  # == Instance Methods =====================================================
 
-  def code=(code)
-    self.id = code.to_s.downcase
-  end
+  delegate :explorer_transaction, :blockchain_api, :explorer_address, to: :blockchain
 
   types.each { |t| define_method("#{t}?") { type == t.to_s } }
 
-  def as_json(*)
-    { code: code,
-      coin: coin?,
-      fiat: fiat? }
+  def blockchain
+    Rails.cache.fetch("#{code}_blockchain", expires_in: 60) { Blockchain.find_by(key: blockchain_key) }
   end
 
-  def summary
-    locked  = Account.with_currency(code).sum(:locked)
-    balance = Account.with_currency(code).sum(:balance)
-    { name:     id.upcase,
-      sum:      locked + balance,
-      balance:  balance,
-      locked:   locked,
-      coinable: coin?,
-      hot:      coin? ? balance : nil }
+  def wipe_cache
+    Rails.cache.delete_matched("currencies*")
   end
 
-  def disabled?
-    !enabled
+  def initialize_defaults
+    self.options = {} if options.blank?
   end
 
-  def is_erc20?
-    erc20_contract_address.present?
+  def link_wallets
+    if parent_id.present?
+      # Iterate through active deposit/withdraw wallets
+      Wallet.active.where.not(kind: :fee).with_currency(parent_id).each do |wallet|
+        # Link parent currency with wallet
+        CurrencyWallet.create(currency_id: id, wallet_id: wallet.id)
+      end
+    end
+  end
+
+  # Allows to dynamically check value of id/code:
+  #
+  #   id.btc? # true if code equals to "btc".
+  #   code.eth? # true if code equals to "eth".
+  def id
+    super&.inquiry
+  end
+
+  # subunit (or fractional monetary unit) - a monetary unit
+  # that is valued at a fraction (usually one hundredth)
+  # of the basic monetary unit
+  def subunits=(n)
+    self.base_factor = 10 ** n
+  end
+
+  # This method defines that token currency need to have parent_id and coin type
+  # We use parent_id for token type to inherit some useful info such as blockchain_key from parent currency
+  # For coin currency enough to have only coin type
+  def token?
+    parent_id.present? && coin?
+  end
+
+  def get_price
+    if price.blank? || price.zero?
+      raise "Price for currency #{id} is unknown"
+    else
+      price
+    end
+  end
+
+  def to_blockchain_api_settings
+    # We pass options are available as top-level hash keys and via options for
+    # compatibility with Wallet#to_wallet_api_settings.
+    opt = options.compact.deep_symbolize_keys
+    opt.deep_symbolize_keys.merge(id:                    id,
+                                  base_factor:           base_factor,
+                                  min_collection_amount: min_collection_amount,
+                                  options:               opt)
   end
 
   def dependent_markets
-    Market.where('ask_unit = ? OR bid_unit = ?', id, id)
+    Market.where('base_unit = ? OR quote_unit = ?', id, id)
   end
 
-  def disable_markets
-    unless enabled?
-      dependent_markets.update_all(enabled: false)
-    end
+  def subunits
+    Math.log(base_factor, 10).round
   end
-
-  def must_not_disable_all_markets
-    if enabled_was && !enabled? && (Market.enabled.count - dependent_markets.enabled.count).zero?
-      errors.add(:currency, 'disables all enabled markets.')
-    end
-  end
-
-  def initialize_options
-    self.options = options.present? ? options : {}
-  end
-
-  def validate_options
-    errors.add(:options, :invalid) unless Hash === options if options.present?
-  end
-
-  def build_options_schema
-    default_schema = DEFAULT_OPTIONS_SCHEMA
-    props_schema = (options.keys - OPTIONS_ATTRIBUTES.map(&:to_s)) \
-                       .map{|v| [v, { title: v.to_s.humanize, format: "table"}]}.to_h
-    default_schema.merge!(props_schema)
-  end
-
-  def set_options_values
-    options.keys.present?  ? \
-          options.keys.map{|v| [v, options[v]]}.to_h \
-          : OPTIONS_ATTRIBUTES.map(&:to_s).map{|v| [v, '']}.to_h
-  end
-
-  attr_readonly :id,
-                :code,
-                :type
 end
 
 # == Schema Information
-# Schema version: 20190225171726
+# Schema version: 20201207134745
 #
 # Table name: currencies
 #
 #  id                    :string(10)       not null, primary key
 #  name                  :string(255)
+#  description           :text(65535)
+#  homepage              :string(255)
 #  blockchain_key        :string(32)
-#  symbol                :string(1)        not null
+#  parent_id             :string(255)
 #  type                  :string(30)       default("coin"), not null
 #  deposit_fee           :decimal(32, 16)  default(0.0), not null
 #  min_deposit_amount    :decimal(32, 16)  default(0.0), not null
@@ -179,18 +229,21 @@ end
 #  min_withdraw_amount   :decimal(32, 16)  default(0.0), not null
 #  withdraw_limit_24h    :decimal(32, 16)  default(0.0), not null
 #  withdraw_limit_72h    :decimal(32, 16)  default(0.0), not null
-#  position              :integer          default(0), not null
-#  options               :string(1000)     default({})
-#  enabled               :boolean          default(TRUE), not null
-#  base_factor           :bigint(8)        default(1), not null
+#  position              :integer          not null
+#  options               :json
+#  visible               :boolean          default(TRUE), not null
+#  deposit_enabled       :boolean          default(TRUE), not null
+#  withdrawal_enabled    :boolean          default(TRUE), not null
+#  base_factor           :bigint           default(1), not null
 #  precision             :integer          default(8), not null
 #  icon_url              :string(255)
+#  price                 :decimal(32, 16)  default(1.0), not null
 #  created_at            :datetime         not null
 #  updated_at            :datetime         not null
 #
 # Indexes
 #
-#  index_currencies_on_enabled           (enabled)
-#  index_currencies_on_enabled_and_code  (enabled)
-#  index_currencies_on_position          (position)
+#  index_currencies_on_parent_id  (parent_id)
+#  index_currencies_on_position   (position)
+#  index_currencies_on_visible    (visible)
 #

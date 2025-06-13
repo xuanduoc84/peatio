@@ -7,10 +7,10 @@ module API
       module NamedParams
         extend ::Grape::API::Helpers
 
-        params :market do
+        params :enabled_markets do
           requires :market,
                    type: String,
-                   values: { value: -> { ::Market.enabled.ids }, message: 'market.market.doesnt_exist' },
+                   values: { value: -> { ::Market.active.ids }, message: 'market.market.doesnt_exist_or_not_enabled' },
                    desc: -> { V2::Entities::Market.documentation[:id] }
         end
 
@@ -25,7 +25,7 @@ module API
                    desc: -> { V2::Entities::Order.documentation[:volume] }
           optional :ord_type,
                    type: String,
-                   values: { value: -> { Order::TYPES}, message:  'market.order.invalid_type' },
+                   values: { value: -> { Order::TYPES }, message: 'market.order.invalid_type' },
                    default: 'limit',
                    desc: -> { V2::Entities::Order.documentation[:type] }
           given ord_type: ->(val) { val == 'limit' } do
@@ -38,7 +38,7 @@ module API
 
         params :order_id do
           requires :id,
-                   type: { value: Integer, message: 'market.order.non_integer_id' },
+                   type: String,
                    allow_blank: false,
                    desc: -> { V2::Entities::Order.documentation[:id] }
         end
@@ -54,6 +54,10 @@ module API
                    allow_blank: false,
                    default: 1,
                    desc: 'Specify the page of paginated results.'
+          optional :type,
+                   type: String,
+                   values: { value: %w(buy sell), message: 'market.trade.invalid_type' },
+                   desc: 'To indicate nature of trade - buy/sell'
           optional :time_from,
                    type: { value: Integer, message: 'market.trade.non_integer_time_from' },
                    allow_blank: { value: false, message: 'market.trade.empty_time_from' },

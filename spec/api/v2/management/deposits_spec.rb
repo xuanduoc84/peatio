@@ -68,18 +68,27 @@ describe API::V2::Management::Deposits, type: :request do
       data.merge!(currency: :usd)
       request
       expect(response).to have_http_status(200)
-      expect(JSON.parse(response.body).count).to eq Deposit.with_currency(:usd).count
+      expect(JSON.parse(response.body).count).to eq Deposit.where(currency_id: :usd).count
+    end
+
+    it 'returns with from_id' do
+      from_id = Deposit.count / 2
+      data.merge!(from_id: from_id)
+      request
+      expect(response).to have_http_status(200)
+      expect(JSON.parse(response.body).count).to eq Deposit.where('id > ?', from_id).count
     end
   end
 
   describe 'create deposits' do
     let(:member) { create(:member, :barong) }
     let(:currency) { Currency.find(:usd) }
+    let!(:account) { member.get_account(:usd) }
     let(:amount) { 750.77 }
     let :data do
       { uid:      member.uid,
         currency: currency.code,
-        amount:   amount }
+        amount:   amount.to_s }
     end
     let(:signers) { %i[alex jeff] }
 
@@ -93,18 +102,19 @@ describe API::V2::Management::Deposits, type: :request do
       record = Deposit.find_by_tid!(JSON.parse(response.body).fetch('tid'))
       expect(record.amount).to eq 750.77
       expect(record.aasm_state).to eq 'submitted'
-      expect(record.account).to eq member.accounts.with_currency(currency).first
+      expect(record.account).to eq member.get_account(currency)
+      expect(response_body['transfer_type']).to eq 'fiat'
     end
 
     it 'can create fiat deposit and immediately accept it' do
       data.merge!(state: :accepted)
-      expect { request }.to change { member.accounts.with_currency(currency).first.balance }.by amount
+      expect { request }.to change { member.get_account(currency).balance }.by amount
     end
 
     it 'denies access unless enough signatures are supplied' do
       data.merge!(state: :accepted)
       signers.clear.concat %i[james jeff]
-      expect { request }.not_to(change { member.accounts.with_currency(currency).first.balance })
+      expect { request }.not_to(change { member.get_account(currency).balance })
       expect(response.status).to eq 401
     end
 
@@ -157,6 +167,18 @@ describe API::V2::Management::Deposits, type: :request do
         expect(Deposit.last.amount.to_s).to eq data[:amount]
       end
     end
+
+    context 'disabled currency' do
+      before do
+        currency.update(deposit_enabled: false)
+      end
+
+      it 'returns error for enabled disabled deposit' do
+        request
+        expect(response).to have_http_status(422)
+        expect(response).to include_api_error('management.currency.deposit_disabled')
+      end
+    end
   end
 
   describe 'get deposit' do
@@ -182,10 +204,10 @@ describe API::V2::Management::Deposits, type: :request do
 
     let(:currency) { Currency.find(:usd) }
     let(:member) { create(:member, :barong) }
-    let(:amount) { 500.90 }
+    let(:amount) { '500.90' }
     let(:signers) { %i[alex jeff] }
     let(:data) { { tid: record.tid } }
-    let(:account) { member.accounts.with_currency(currency).first }
+    let(:account) { member.get_account(currency) }
     let(:record) { Deposits::Fiat.create!(member: member, amount: amount, currency: currency) }
 
     context 'coin deposit' do
@@ -214,7 +236,7 @@ describe API::V2::Management::Deposits, type: :request do
       expect(response).to have_http_status(200)
       expect(Deposit.find_by_tid!(JSON.parse(response.body).fetch('tid')).aasm_state).to eq 'accepted'
       account.reload
-      expect(account.balance).to eq amount
+      expect(account.balance).to eq amount.to_d
       expect(account.locked).to eq 0
     end
 
@@ -234,7 +256,7 @@ describe API::V2::Management::Deposits, type: :request do
       data.merge!(state: :accepted)
       expect { request }.not_to(change { record.reload.aasm_state })
       expect(response).to have_http_status(422)
-      expect(record.account.balance).to eq amount
+      expect(record.account.balance).to eq amount.to_d
       expect(record.account.locked).to eq 0
     end
 
@@ -248,7 +270,7 @@ describe API::V2::Management::Deposits, type: :request do
     it 'denies access unless enough signatures are supplied' do
       data.merge!(state: :accepted)
       signers.clear.concat %i[james]
-      expect { request }.not_to(change { member.accounts.with_currency(:usd).first.balance })
+      expect { request }.not_to(change { member.get_account(:usd).balance })
       expect(response.status).to eq 401
     end
   end

@@ -12,7 +12,7 @@ module API
             desc: "Unique market id. It's always in the form of xxxyyy,"\
                   "where xxx is the base currency code, yyy is the quote"\
                   "currency code, e.g. 'btcusd'. All available markets can"\
-                  "be found at /api/v2/markets." 
+                  "be found at /api/v2/markets."
           }
         )
 
@@ -25,82 +25,66 @@ module API
         )
 
         expose(
-          :ask_unit,
+          :base_unit,
           documentation: {
             type: String,
-            desc: "Market ask unit."
+            desc: "Market Base unit."
           }
         )
 
         expose(
-          :bid_unit,
+          :quote_unit,
           documentation: {
             type: String,
-            desc: "Market bid unit."
+            desc: "Market Quote unit."
           }
         )
 
         expose(
-          :ask_fee,
+          :min_price,
           documentation: {
             type: BigDecimal,
-            desc: "Market ask fee."
+            desc: "Minimum order price."
           }
         )
 
         expose(
-          :bid_fee,
+          :max_price,
           documentation: {
             type: BigDecimal,
-            desc: "Market bid fee."
+            desc: "Maximum order price."
           }
         )
 
         expose(
-          :min_ask_price,
+          :min_amount,
           documentation: {
             type: BigDecimal,
-            desc: "Max ask order price."
+            desc: "Minimum order amount."
           }
         )
 
         expose(
-          :max_bid_price,
+          :amount_precision,
           documentation: {
             type: BigDecimal,
-            desc: "Max bid order price."
+            desc: "Precision for order amount."
           }
         )
 
         expose(
-          :min_ask_amount,
+          :price_precision,
           documentation: {
             type: BigDecimal,
-            desc: "Min ask order amount."
+            desc: "Precision for order price."
           }
         )
 
         expose(
-          :min_bid_amount,
+          :state,
           documentation: {
-            type: BigDecimal,
-            desc: "Min bid order amount."
-          }
-        )
-
-        expose(
-          :ask_precision,
-          documentation: {
-            type: BigDecimal,
-            desc: "Precision for ask order."
-          }
-        )
-
-        expose(
-          :bid_precision,
-          documentation: {
-            type: BigDecimal,
-            desc: "Precision for bid order."
+            type: String,
+            desc: "Market state defines if user can see/trade on current market."
           }
         )
       end

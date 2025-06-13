@@ -17,11 +17,23 @@ module API
         params do
           optional :currency,
                    type: String,
-                   values: { value: -> { Currency.enabled.codes(bothcase: true) }, message: 'account.currency.doesnt_exist' },
+                   values: { value: -> { Currency.visible.codes(bothcase: true) }, message: 'account.currency.doesnt_exist' },
                    desc: 'Currency code'
           optional :state,
+                   values: { value: ->(v) { (Array.wrap(v) - ::Deposit.aasm.states.map(&:name).map(&:to_s)).blank? }, message: 'account.deposit.invalid_state' },
+                   desc: 'Filter deposits by states.'
+          optional :txid,
                    type: String,
-                   values: { value: -> { Deposit::STATES.map(&:to_s) }, message: 'account.deposit.invalid_state' }
+                   allow_blank: false,
+                   desc: 'Deposit transaction id.'
+          optional :time_from,
+                   allow_blank: { value: false, message: 'account.deposit.empty_time_from' },
+                   type: { value: Integer, message: 'account.deposit.non_integer_time_from' },
+                   desc: 'An integer represents the seconds elapsed since Unix epoch.'
+          optional :time_to,
+                   type: { value: Integer, message: 'account.deposit.non_integer_time_to' },
+                   allow_blank: { value: false, message: 'account.deposit.empty_time_to' },
+                   desc: 'An integer represents the seconds elapsed since Unix epoch.'
           optional :limit,
                    type: { value: Integer, message: 'account.deposit.non_integer_limit' },
                    values: { value: 1..100, message: 'account.deposit.invalid_limit' },
@@ -34,11 +46,16 @@ module API
                    desc: 'Page number (defaults to 1).'
         end
         get "/deposits" do
+          user_authorize! :read, ::Deposit
+
           currency = Currency.find(params[:currency]) if params[:currency].present?
 
           current_user.deposits.order(id: :desc)
                       .tap { |q| q.where!(currency: currency) if currency }
+                      .tap { |q| q.where!(txid: params[:txid]) if params[:txid] }
                       .tap { |q| q.where!(aasm_state: params[:state]) if params[:state] }
+                      .tap { |q| q.where!('updated_at >= ?', Time.at(params[:time_from])) if params[:time_from].present? }
+                      .tap { |q| q.where!('updated_at <= ?', Time.at(params[:time_to])) if params[:time_to].present? }
                       .tap { |q| present paginate(q), with: API::V2::Entities::Deposit }
         end
 
@@ -52,6 +69,8 @@ module API
                    desc: "Deposit transaction id"
         end
         get "/deposits/:txid" do
+          user_authorize! :read, ::Deposit
+
           deposit = current_user.deposits.find_by!(txid: params[:txid])
           present deposit, with: API::V2::Entities::Deposit
         end
@@ -63,7 +82,7 @@ module API
         params do
           requires :currency,
                    type: String,
-                   values: { value: -> { Currency.coins.enabled.codes(bothcase: true) }, message: 'account.currency.doesnt_exist'},
+                   values: { value: -> { Currency.coins.visible.codes(bothcase: true) }, message: 'account.currency.doesnt_exist'},
                    desc: 'The account you want to deposit to.'
           given :currency do
             optional :address_format,
@@ -73,10 +92,23 @@ module API
                      desc: 'Address format legacy/cash'
           end
         end
-        get '/deposit_address/:currency' do
-          current_user.ac(params[:currency]).payment_address.yield_self do |pa|
-            { currency: params[:currency], address: params[:address_format] ? pa.format_address(params[:address_format]) : pa.address }
+        get '/deposit_address/:currency', requirements: { currency: /[\w\.\-]+/ } do
+          user_authorize! :read, ::PaymentAddress
+
+          currency = Currency.find(params[:currency])
+
+          unless currency.deposit_enabled?
+            error!({ errors: ['account.currency.deposit_disabled'] }, 422)
           end
+
+          wallet = Wallet.active_deposit_wallet(currency.id)
+
+          unless wallet.present?
+            error!({ errors: ['account.wallet.not_found'] }, 422)
+          end
+
+          payment_address = current_user.payment_address(wallet.id)
+          present payment_address, with: API::V2::Entities::PaymentAddress, address_format: params[:address_format]
         end
       end
     end

@@ -10,27 +10,53 @@ module API
           documentation: {
             desc: 'Currency code.',
             type: String,
-            values: -> { ::Currency.enabled.codes },
-            example: -> { ::Currency.enabled.first.id }
+            values: -> { ::Currency.visible.codes },
+            example: -> { ::Currency.visible.first.id }
           }
         )
 
         expose(
-            :name,
-            documentation: {
-                type: String,
-                desc: 'Currency name',
-                example: -> { ::Currency.enabled.first.name }
-            },
-            if: -> (currency){ currency.name.present? }
+          :name,
+          documentation: {
+              type: String,
+              desc: 'Currency name',
+              example: -> { ::Currency.visible.first.name }
+          },
+          if: -> (currency){ currency.name.present? }
         )
 
         expose(
-          :symbol,
+          :description,
           documentation: {
             type: String,
-            desc: 'Currency symbol',
-            example: -> { ::Currency.enabled.first.symbol }
+            desc: 'Currency description',
+            example: -> { ::Currency.visible.first.id }
+          }
+        )
+
+        expose(
+          :homepage,
+          documentation: {
+            type: String,
+            desc: 'Currency homepage',
+            example: -> { ::Currency.visible.first.homepage }
+          }
+        )
+
+        expose(
+          :parent_id,
+          documentation: {
+            type: String,
+            desc: 'Currency parent id',
+            example: -> { ::Currency.visible.first.parent_id }
+          },
+          if: -> (currency){ currency.parent_id.present? }
+        )
+
+        expose(
+          :price,
+          documentation: {
+            desc: 'Currency current price'
           }
         )
 
@@ -58,7 +84,23 @@ module API
             type: String,
             values: -> { ::Currency.types },
             desc: 'Currency type',
-            example: -> { ::Currency.enabled.first.type }
+            example: -> { ::Currency.visible.first.type }
+          }
+        )
+
+        expose(
+          :deposit_enabled,
+          documentation: {
+            type: String,
+            desc: 'Currency deposit possibility status (true/false).'
+          }
+        )
+
+        expose(
+          :withdrawal_enabled,
+          documentation: {
+            type: String,
+            desc: 'Currency withdrawal possibility status (true/false).'
           }
         )
 
@@ -66,7 +108,7 @@ module API
           :deposit_fee,
           documentation: {
             desc: 'Currency deposit fee',
-            example: -> { ::Currency.enabled.first.deposit_fee }
+            example: -> { ::Currency.visible.first.deposit_fee }
           }
         )
 
@@ -74,7 +116,7 @@ module API
           :min_deposit_amount,
           documentation: {
             desc: 'Minimal deposit amount',
-            example: -> { ::Currency.enabled.first.min_deposit_amount }
+            example: -> { ::Currency.visible.first.min_deposit_amount }
           }
         )
 
@@ -82,7 +124,7 @@ module API
           :withdraw_fee,
           documentation: {
             desc: 'Currency withdraw fee',
-            example: -> { ::Currency.enabled.first.withdraw_fee }
+            example: -> { ::Currency.visible.first.withdraw_fee }
           }
         )
 
@@ -90,7 +132,7 @@ module API
           :min_withdraw_amount,
           documentation: {
             desc: 'Minimal withdraw amount',
-            example: -> { ::Currency.enabled.first.min_withdraw_amount }
+            example: -> { ::Currency.visible.first.min_withdraw_amount }
           }
         )
 
@@ -98,7 +140,7 @@ module API
           :withdraw_limit_24h,
           documentation: {
             desc: 'Currency 24h withdraw limit',
-            example: -> { ::Currency.enabled.first.withdraw_limit_24h }
+            example: -> { ::Currency.visible.first.withdraw_limit_24h }
           }
         )
 
@@ -106,7 +148,7 @@ module API
           :withdraw_limit_72h,
           documentation: {
             desc: 'Currency 72h withdraw limit',
-            example: -> { ::Currency.enabled.first.withdraw_limit_72h }
+            example: -> { ::Currency.visible.first.withdraw_limit_72h }
           }
         )
 
@@ -114,7 +156,7 @@ module API
           :base_factor,
           documentation: {
             desc: 'Currency base factor',
-            example: -> { ::Currency.enabled.first.base_factor }
+            example: -> { ::Currency.visible.first.base_factor }
           }
         )
 
@@ -122,9 +164,18 @@ module API
           :precision,
           documentation: {
             desc: 'Currency precision',
-            example: -> { ::Currency.enabled.first.precision }
+            example: -> { ::Currency.visible.first.precision }
           }
         )
+
+        expose(
+          :position,
+          documentation: {
+            desc: 'Position used for defining currencies order',
+            example: -> { ::Currency.visible.first.precision }
+          }
+        )
+
         expose(
           :icon_url,
           documentation: {
@@ -133,6 +184,14 @@ module API
           },
           if: -> (currency){ currency.icon_url.present? }
         )
+
+        expose(
+          :min_confirmations,
+          if: ->(currency) { currency.coin? },
+          documentation: {
+            desc: 'Number of confirmations required for confirming deposit or withdrawal'
+          }
+        ) { |c| c.blockchain.min_confirmations }
       end
     end
   end

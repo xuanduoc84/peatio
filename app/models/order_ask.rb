@@ -2,18 +2,18 @@
 # frozen_string_literal: true
 
 class OrderAsk < Order
-  has_many :trades, -> { order(id: :asc) }, foreign_key: :ask_id
   scope :matching_rule, -> { order(price: :asc, created_at: :asc) }
 
-  validates :price,
-            presence: true,
-            numericality: { greater_than_or_equal_to: ->(order){ order.market.min_ask_price }},
-            if: :is_limit_order?
-
-  validates :origin_volume,
-            presence: true,
-            numericality: { greater_than_or_equal_to: ->(order){ order.market.min_ask_amount }}
-
+  class << self
+    def get_depth(market_id)
+      where(market_id: market_id, state: :wait)
+        .where.not(ord_type: :market)
+        .order(price: :asc)
+        .group(:price)
+        .sum(:volume)
+        .to_a
+    end
+  end
   # @deprecated
   def hold_account
     member.get_account(ask)
@@ -34,11 +34,20 @@ class OrderAsk < Order
 
   def avg_price
     return ::Trade::ZERO if funds_used.zero?
-    config.fix_number_precision(:bid, funds_received / funds_used)
+    market.round_price(funds_received / funds_used)
   end
 
+  # @deprecated Please use {income/outcome_currency} in Order model
   def currency
     Currency.find(ask)
+  end
+
+  def income_currency
+    bid_currency
+  end
+
+  def outcome_currency
+    ask_currency
   end
 
   def compute_locked
@@ -46,25 +55,27 @@ class OrderAsk < Order
     when 'limit'
       volume
     when 'market'
-      estimate_required_funds(Global[market_id].bids) {|_p, v| v}
+      estimate_required_funds(OrderBid.get_depth(market_id)) {|_p, v| v}
     end
   end
-
 end
 
 # == Schema Information
-# Schema version: 20190213104708
+# Schema version: 20201125134745
 #
 # Table name: orders
 #
 #  id             :integer          not null, primary key
+#  uuid           :binary(16)       not null
+#  remote_id      :string(255)
 #  bid            :string(10)       not null
 #  ask            :string(10)       not null
 #  market_id      :string(20)       not null
 #  price          :decimal(32, 16)
 #  volume         :decimal(32, 16)  not null
 #  origin_volume  :decimal(32, 16)  not null
-#  fee            :decimal(32, 16)  default(0.0), not null
+#  maker_fee      :decimal(17, 16)  default(0.0), not null
+#  taker_fee      :decimal(17, 16)  default(0.0), not null
 #  state          :integer          not null
 #  type           :string(8)        not null
 #  member_id      :integer          not null
@@ -85,4 +96,5 @@ end
 #  index_orders_on_type_and_state_and_market_id  (type,state,market_id)
 #  index_orders_on_type_and_state_and_member_id  (type,state,member_id)
 #  index_orders_on_updated_at                    (updated_at)
+#  index_orders_on_uuid                          (uuid) UNIQUE
 #

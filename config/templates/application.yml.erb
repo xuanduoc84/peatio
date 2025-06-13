@@ -5,6 +5,8 @@ defaults: &defaults
   # `redis://:[password]@[hostname]:[port]/[db]`
   # (password, port and database are optional).
   REDIS_URL:      redis://localhost:6379
+  REDIS_PASSWORD: ~
+  REDIS_CLUSTER:  false
 
   # Application URL configuration variables.
   URL_HOST:                peatio.tech
@@ -83,16 +85,13 @@ defaults: &defaults
   JWT_ISSUED_AT_LEEWAY:  '180'    # Seconds (optional).
   JWT_EXPIRATION_LEEWAY: ~      # Seconds (optional).
   JWT_NOT_BEFORE_LEEWAY: ~      # Seconds (optional).
+  PEATIO_JWT_PRIVATE_KEY: ~
 
   # Scout APM configuration variables.
   SCOUT_KEY:       ~          # Your organization key for Scout APM. Found on the settings screen.
   SCOUT_APP_NAME:  ~          # Application name in APM Web UI.
   SCOUT_LOG_LEVEL: warn       # Verboseness of logs (debug, info, warn, error)
   SCOUT_ENV:       production # List of Rails environments for which Scout should be enabled.
-
-  # Specify the code of currency which is used to display the equivalent of the amounts of other currencies.
-  # The specified currency should exist in database.
-  DISPLAY_CURRENCY: usd
 
   # Configuration variables for dynamic Barong levels (1.8+).
   MINIMUM_MEMBER_LEVEL_FOR_DEPOSIT:  '3'
@@ -127,8 +126,12 @@ defaults: &defaults
   ENABLE_ACCOUNT_WITHDRAWAL_API: 'true'
 
   # Configure Vault to verify OTP for Withdraw API
-  VAULT_URL:    http://127.0.0.1:8200
-  VAULT_TOKEN:  changeme
+  VAULT_ADDR:   http://127.0.0.1:8200
+  VAULT_TOKEN:  ""
+
+  # Configure to limit currencies and markets on the platform.
+  MAX_CURRENCIES: ~
+  MAX_MARKETS:    ~
 
 development:
   <<: *defaults

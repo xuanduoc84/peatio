@@ -5,14 +5,14 @@ def bot_username
 end
 
 def repository_slug
-  ENV.fetch('REPOSITORY_SLUG', 'rubykube/peatio')
+  ENV.fetch('REPOSITORY_SLUG', 'openware/peatio')
 end
 
 namespace 'release' do
 
   desc 'Bump the version of the application'
   task :travis do
-    unless ENV['TRAVIS_BRANCH'] == 'master'
+    unless ENV['TRAVIS_BRANCH'] == 'master' || ENV['TRAVIS_BRANCH'].match?(/^[0-9]+-[0-9]+-stable$/)
       Kernel.abort 'Bumping version aborted: GitHub pull request detected.'
     end
 

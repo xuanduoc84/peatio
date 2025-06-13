@@ -3,10 +3,13 @@
 
 describe API::V2::Public::Markets, type: :request do
 
+  before(:each) { clear_redis }
   describe 'GET /api/v2/markets' do
+    before { create(:market, :ethusd) }
 
     let(:expected_keys) do
-      %w[id name ask_unit bid_unit ask_fee bid_fee min_ask_price max_bid_price min_ask_amount min_bid_amount ask_precision bid_precision]
+      %w[id name base_unit quote_unit min_price max_price
+         min_amount amount_precision price_precision state]
     end
 
     it 'lists enabled markets' do
@@ -15,8 +18,157 @@ describe API::V2::Public::Markets, type: :request do
       result = JSON.parse(response.body)
 
       expect(result.size).to eq Market.enabled.size
+
       result.each do |market|
-        expect(market.keys).to eq expected_keys
+        expect(market.keys).to contain_exactly(*expected_keys)
+      end
+    end
+
+    context 'api will return hidden markets' do
+      before { create(:market, :btceur, state: :hidden) }
+      it 'returns hidden market' do
+        get '/api/v2/public/markets'
+        expect(response).to be_successful
+        result = JSON.parse(response.body)
+
+        expect(result.find { |currency| currency['id'] == 'btceur' }['state']).to eq('hidden')
+      end
+    end
+
+    context 'pagination' do
+      it 'returns paginated markets' do
+        get '/api/v2/public/markets', params: { limit: 2 }
+
+        result = JSON.parse(response.body)
+
+        expect(response).to be_successful
+
+        expect(response.headers.fetch('Total').to_i).to eq Market.enabled.size
+        expect(result.size).to eq(2)
+      end
+    end
+
+    context 'filters' do
+      context 'base_unit & quote_unit' do
+        it 'filters by base_unit' do
+          get '/api/v2/public/markets', params: { base_unit: :btc }
+          expect(response).to be_successful
+          result = JSON.parse(response.body)
+
+          expect(result.size).to eq Market.enabled.where(base_unit: :btc).size
+          result.each do |market|
+            expect(market['base_unit']).to eq 'btc'
+          end
+        end
+
+        it 'filters by quote_unit' do
+          get '/api/v2/public/markets', params: { quote_unit: :usd }
+          expect(response).to be_successful
+          result = JSON.parse(response.body)
+
+          expect(result.size).to eq Market.enabled.where(quote_unit: :usd).size
+          result.each do |market|
+            expect(market['quote_unit']).to eq 'usd'
+          end
+        end
+
+        it 'does not filter' do
+          get '/api/v2/public/markets'
+          expect(response).to be_successful
+          result = JSON.parse(response.body)
+
+          expect(result.size).to eq Market.enabled.size
+        end
+      end
+
+      context 'base_code & quote_code' do
+        it 'filters by base_code' do
+          get '/api/v2/public/markets', params: { search: { base_code: "bt" } }
+          # Since we have next markets list:
+          # btcusd, btceth, ethusd
+          # Since 2 of them has 'bt' in base_unit (btc).
+          # We expect them to be returned in API response.
+          expect(response).to be_successful
+          result = JSON.parse(response.body)
+
+          expect(result.pluck('id')).to contain_exactly('btceth', 'btcusd')
+        end
+
+        it 'filters by quote_code' do
+          Currency.find(:eur).update(visible: true)
+          create(:market, :btceur)
+          # Since we have next markets list:
+          # btceur, btcusd, btceth, ethusd
+          # Since 2 of them has 'e' in quote_unit (eur, eth).
+          # We expect them to be returned in API response.
+          get '/api/v2/public/markets', params: { search: { quote_code: "e" } }
+          expect(response).to be_successful
+          result = JSON.parse(response.body)
+
+          expect(result.pluck('id')).to contain_exactly('btceth', 'btceur')
+        end
+      end
+
+      context 'quote_name' do
+        before do
+          Currency.find(:eur).update(visible: true)
+          create(:market, :btceur)
+          create(:market, :btctrst)
+        end
+
+        it 'filters by name 1' do
+          # Since we have next markets list:
+          # btceur, btcusd, btceth, btctrst, ethusd
+          # Since 3 of them has 'E' in quote name (Euro, Ethereum, We Trust).
+          # We expect them to be returned in API response.
+          get '/api/v2/public/markets', params: { search: { quote_name: 'E' } }
+          expect(response).to be_successful
+          result = JSON.parse(response.body)
+          expect(result.pluck('id')).to contain_exactly('btceth', 'btceur', 'btctrst')
+        end
+
+        it 'filters by name 2' do
+          # Since we have next markets list:
+          # btceur, btcusd, btceth, btctrst, ethusd
+          # Since 3 of them has 'uS' in quote name (US Dollar, We Trust).
+          # We expect them to be returned in API response.
+          get '/api/v2/public/markets', params: { search: { quote_name: 'uS' } }
+          expect(response).to be_successful
+          result = JSON.parse(response.body)
+          expect(result.pluck('id')).to contain_exactly('btcusd', 'btctrst', 'ethusd')
+        end
+      end
+
+      context 'complex filter' do
+        before do
+          Currency.find(:eur).update(visible: true)
+          create(:market, :btceur)
+          create(:market, :btctrst)
+        end
+
+        it 'filters by base_unit & quote_name or quote_code' do
+          # Since we have next markets list:
+          # btceur, btcusd, btceth, btctrst, ethusd
+          # 1. Filter by base_unit btc: btceur, btcusd, btceth, btctrst
+          # 2. Filter by quote_code or quote_name 'et': btceth, btctrst (Ethereum, WeTrust)
+          # We expect them to be returned in API response.
+          get '/api/v2/public/markets', params: { base_unit: :btc, search: { quote_name: 'et', quote_code: 'et' } }
+          expect(response).to be_successful
+          result = JSON.parse(response.body)
+          expect(result.pluck('id')).to contain_exactly('btceth', 'btctrst')
+        end
+
+        it 'filters by base_unit & quote_code' do
+          # Since we have next markets list:
+          # btceur, btcusd, btceth, btctrst, ethusd
+          # 1. Filter by base_unit btc: btceur, btcusd, btceth, btctrst
+          # 2. Filter by quote_code 'et': btceth (eth)
+          # We expect them to be returned in API response.
+          get '/api/v2/public/markets', params: { base_unit: :btc, search: { quote_code: 'et' } }
+          expect(response).to be_successful
+          result = JSON.parse(response.body)
+          expect(result.pluck('id')).to contain_exactly('btceth')
+        end
       end
     end
   end
@@ -36,6 +188,20 @@ describe API::V2::Public::Markets, type: :request do
       result = JSON.parse(response.body)
       expect(result['asks'].size).to eq 5
       expect(result['bids'].size).to eq 5
+    end
+
+    context 'market name with dot' do
+      let!(:currency) { create(:currency, :xagm_cx) }
+      let!(:market) { create(:market, :xagm_cxusd) }
+
+      it 'returns information about specified market' do
+        get "/api/v2/public/markets/#{market.id}/order-book"
+        expect(response).to be_successful
+
+        result = JSON.parse(response.body)
+        expect(result['asks'].size).to eq 0
+        expect(result['bids'].size).to eq 0
+      end
     end
 
     it 'returns limited asks and bids' do
@@ -67,23 +233,40 @@ describe API::V2::Public::Markets, type: :request do
   end
 
   describe 'GET /api/v2/markets/:market/depth' do
-    let(:asks) { [['100', '2.0'], ['120', '1.0']] }
-    let(:bids) { [['90', '3.0'], ['50', '1.0']] }
+    before do
+      create_list(:order_bid, 5, :btcusd)
+      create_list(:order_bid, 5, :btcusd, price: 2)
+      create_list(:order_ask, 5, :btcusd)
+      create_list(:order_ask, 5, :btcusd, price: 3)
+    end
+
+    let(:asks) { [["1.0", "5.0"], ["3.0", "5.0"]] }
+    let(:bids) { [["2.0", "5.0"], ["1.0", "5.0"]] }
+
     let(:market) { :btcusd }
 
     context 'valid market param' do
-      before do
-        global = mock('global', asks: asks, bids: bids)
-        Global.stubs(:[]).returns(global)
-      end
-
       it 'sorts asks and bids from highest to lowest' do
         get "/api/v2/public/markets/#{market}/depth"
         expect(response).to be_successful
 
         result = JSON.parse(response.body)
-        expect(result['asks']).to eq asks.reverse
+        expect(result['asks']).to eq asks
         expect(result['bids']).to eq bids
+      end
+    end
+
+    context 'market name with dot' do
+      let!(:currency) { create(:currency, :xagm_cx) }
+      let!(:market) { create(:market, :xagm_cxusd) }
+
+      it 'returns information about specified market' do
+        get "/api/v2/public/markets/#{market.id}/depth"
+        expect(response).to be_successful
+
+        result = JSON.parse(response.body)
+        expect(result['asks'].size).to eq 0
+        expect(result['bids'].size).to eq 0
       end
     end
 
@@ -138,8 +321,32 @@ describe API::V2::Public::Markets, type: :request do
     let(:last_point)  { points.last }
     let(:first_point) { points.first }
 
-    before { KlineDB.redis.rpush('peatio:btcusd:k:1', points) }
-    after { KlineDB.redis.flushall }
+    before { write_to_influx(points) }
+    after { delete_measurments("candles_1m") }
+
+    def influx_data(point)
+      {
+        values:
+        {
+          open: point[1],
+          high: point[2],
+          low: point[3],
+          close: point[4],
+          volume: point[5],
+        },
+        tags:
+        {
+          market: 'btcusd'
+        },
+        timestamp: point[0]
+      }
+    end
+
+    def write_to_influx(points)
+      points.each do |point|
+        Peatio::InfluxDB.client(epoch: 's').write_point('candles_1m', influx_data(point), 's')
+      end
+    end
 
     def load_k_line(query = {})
       api_get '/api/v2/public/markets/btcusd/k-line?' + query.to_query
@@ -159,7 +366,7 @@ describe API::V2::Public::Markets, type: :request do
       context 'with time_from' do
         it 'smaller than first point timestamp' do
           load_k_line(time_from: first_point.first - 2 * point_period)
-          expect(response_body).to eq points[0...points_default_limit - 2]
+          expect(response_body).to eq points[0...points_default_limit]
         end
 
         it 'bigger than last point timestamp' do
@@ -191,7 +398,7 @@ describe API::V2::Public::Markets, type: :request do
         it 'bigger than last point timestamp' do
           load_k_line(time_to: last_point.first + 2 * point_period)
           # Returns (limit - 2) left points.
-          points[(-points_default_limit + 2)..-1]
+          expect(response_body).to eq points[-points_default_limit..]
         end
 
         it 'in range of first and last timestamp' do
@@ -293,7 +500,7 @@ describe API::V2::Public::Markets, type: :request do
     end
 
     context 'data is missing' do
-      before { KlineDB.redis.flushall }
+      before { delete_measurments("candles_1m") }
 
       it 'without time_from' do
         load_k_line
@@ -313,15 +520,13 @@ describe API::V2::Public::Markets, type: :request do
   end
 
   describe 'GET /api/v2/markets/tickers' do
-    before { clear_redis }
-    after { clear_redis }
+    after { delete_measurments("trades") }
 
     context 'no trades executed yet' do
       let(:expected_ticker) do
-        { 'buy' => '0.0', 'sell' => '0.0',
-          'low' => '0.0', 'high' => '0.0',
+        { 'low' => '0.0', 'high' => '0.0',
           'open' => '0.0', 'last' => '0.0',
-          'volume' => '0.0', 'vol' => '0.0',
+          'volume' => '0.0', 'vol' => '0.0', 'amount' => '0.0',
           'avg_price' => '0.0', 'price_change_percent' => '+0.00%' }
       end
 
@@ -329,119 +534,122 @@ describe API::V2::Public::Markets, type: :request do
         get '/api/v2/public/markets/tickers'
         expect(response).to be_successful
         expect(JSON.parse(response.body)['btcusd']['at']).not_to be_nil
-        expect(JSON.parse(response.body)['btcusd']['ticker']).to eq (expected_ticker)
+        expect(JSON.parse(response.body)['btcusd']['ticker']).to include(expected_ticker)
       end
     end
 
     context 'single trade was executed' do
-      let!(:trade) { create(:trade, :btcusd, price: '5.0'.to_d, volume: '1.1'.to_d, funds: '5.5'.to_d)}
+      let!(:trade) { create(:trade, :btcusd, price: '5.0'.to_d, amount: '1.1'.to_d, total: '5.5'.to_d)}
       let(:expected_ticker) do
-        { 'buy' => '0.0', 'sell' => '0.0',
-          'low' => '5.0', 'high' => '5.0',
+        { 'low' => '5.0', 'high' => '5.0',
           'open' => '5.0', 'last' => '5.0',
-          'volume' => '1.1', 'vol' => '1.1',
+          'volume' => '5.5', 'vol' => '5.5', 'amount' => '1.1',
           'avg_price' => '5.0', 'price_change_percent' => '+0.00%' }
       end
       before do
-        Worker::MarketTicker.new.process(trade.as_json, nil, nil)
+        trade.write_to_influx
       end
 
       it 'returns market tickers' do
         get '/api/v2/public/markets/tickers'
         expect(response).to be_successful
         expect(JSON.parse(response.body)['btcusd']['at']).not_to be_nil
-        expect(JSON.parse(response.body)['btcusd']['ticker']).to eq (expected_ticker)
+        expect(JSON.parse(response.body)['btcusd']['ticker']).to include(expected_ticker)
       end
     end
 
     context 'multiple trades were executed' do
-      let!(:trade1) { create(:trade, :btcusd, price: '5.0'.to_d, volume: '1.1'.to_d, funds: '5.5'.to_d)}
-      let!(:trade2) { create(:trade, :btcusd, price: '6.0'.to_d, volume: '0.9'.to_d, funds: '5.4'.to_d)}
+      let!(:trade1) { create(:trade, :btcusd, price: '5.0'.to_d, amount: '1.1'.to_d, total: '5.5'.to_d)}
+      let!(:trade2) { create(:trade, :btcusd, price: '6.0'.to_d, amount: '0.9'.to_d, total: '5.4'.to_d)}
 
-      # open = 6.0 because it takes last by default.
-      # to make it work correctly need to run k-line daemon.
       let(:expected_ticker) do
-        { 'buy' => '0.0', 'sell' => '0.0',
-          'low' => '5.0', 'high' => '6.0',
-          'open' => '6.0', 'last' => '6.0',
-          'vol' => '2.0', 'volume' => '2.0',
-          'avg_price' => '5.45', 'price_change_percent' => '+0.00%' }
+        { 'low' => '5.0', 'high' => '6.0',
+          'open' => '5.0', 'last' => '6.0',
+          'vol' => '10.9', 'volume' => '10.9', 'amount' => '2.0',
+          'avg_price' => '5.45', 'price_change_percent' => '+20.00%' }
       end
       before do
-        Worker::MarketTicker.new.process(trade1.as_json, nil, nil)
-        Worker::MarketTicker.new.process(trade2.as_json, nil, nil)
+        trade1.write_to_influx
+        trade2.write_to_influx
       end
 
       it 'returns market tickers' do
         get '/api/v2/public/markets/tickers'
         expect(response).to be_successful
         expect(JSON.parse(response.body)['btcusd']['at']).not_to be_nil
-        expect(JSON.parse(response.body)['btcusd']['ticker']).to eq (expected_ticker)
+        expect(JSON.parse(response.body)['btcusd']['ticker']).to include(expected_ticker)
       end
     end
   end
 
   describe 'GET /api/v2/public/markets/:market/tickers' do
-    before { clear_redis }
-    after { clear_redis }
+    after { delete_measurments("trades") }
     context 'no trades executed yet' do
       let(:expected_ticker) do
-        { 'buy' => '0.0', 'sell' => '0.0',
-          'low' => '0.0', 'high' => '0.0',
+        { 'low' => '0.0', 'high' => '0.0',
           'open' => '0.0', 'last' => '0.0',
-          'volume' => '0.0', 'vol' => '0.0',
+          'volume' => '0.0', 'vol' => '0.0', 'amount' => '0.0',
           'avg_price' => '0.0', 'price_change_percent' => '+0.00%'  }
       end
 
       it 'returns market tickers' do
         get '/api/v2/public/markets/btcusd/tickers'
         expect(response).to be_successful
-        expect(JSON.parse(response.body)['ticker']).to eq (expected_ticker)
+        expect(JSON.parse(response.body)['ticker']).to include(expected_ticker)
+      end
+
+      context 'market name with dot' do
+        let!(:currency) { create(:currency, :xagm_cx) }
+        let!(:market) { create(:market, :xagm_cxusd) }
+
+        it 'returns information about specified market' do
+          get "/api/v2/public/markets/#{market.id}/tickers"
+          expect(response).to be_successful
+          expect(JSON.parse(response.body)['ticker']).to include(expected_ticker)
+        end
       end
     end
 
     context 'single trade was executed' do
-      let!(:trade) { create(:trade, :btcusd, price: '5.0'.to_d, volume: '1.1'.to_d, funds: '5.5'.to_d)}
+      let!(:trade) { create(:trade, :btcusd, price: '5.0'.to_d, amount: '1.1'.to_d, total: '5.5'.to_d)}
       let(:expected_ticker) do
-        { 'buy' => '0.0', 'sell' => '0.0',
-          'low' => '5.0', 'high' => '5.0',
+        { 'low' => '5.0', 'high' => '5.0',
           'open' => '5.0', 'last' => '5.0',
-          'volume' => '1.1', 'vol' => '1.1',
+          'volume' => '5.5', 'vol' => '5.5', 'amount' => '1.1',
           'avg_price' => '5.0', 'price_change_percent' => '+0.00%' }
       end
       before do
-        Worker::MarketTicker.new.process(trade.as_json, nil, nil)
+        trade.write_to_influx
       end
 
       it 'returns market tickers' do
         get '/api/v2/public/markets/btcusd/tickers'
         expect(response).to be_successful
-        expect(JSON.parse(response.body)['ticker']).to eq (expected_ticker)
+        expect(JSON.parse(response.body)['ticker']).to include(expected_ticker)
       end
     end
 
     context 'multiple trades were executed' do
-      let!(:trade1) { create(:trade, :btcusd, price: '5.0'.to_d, volume: '1.1'.to_d, funds: '5.5'.to_d)}
-      let!(:trade2) { create(:trade, :btcusd, price: '6.0'.to_d, volume: '0.9'.to_d, funds: '5.4'.to_d)}
+      let!(:trade1) { create(:trade, :btcusd, price: '5.0'.to_d, amount: '1.1'.to_d, total: '5.5'.to_d)}
+      let!(:trade2) { create(:trade, :btcusd, price: '6.0'.to_d, amount: '0.9'.to_d, total: '5.4'.to_d)}
 
       # open = 6.0 because it takes last by default.
       # to make it work correctly need to run k-line daemon.
       let(:expected_ticker) do
-        { 'buy' => '0.0', 'sell' => '0.0',
-          'low' => '5.0', 'high' => '6.0',
-          'open' => '6.0', 'last' => '6.0',
-          'vol' => '2.0', 'volume' => '2.0',
-          'avg_price' => '5.45', 'price_change_percent' => '+0.00%' }
+        { 'low' => '5.0', 'high' => '6.0',
+          'open' => '5.0', 'last' => '6.0',
+          'vol' => '10.9', 'volume' => '10.9', 'amount' => '2.0',
+          'avg_price' => '5.45', 'price_change_percent' => '+20.00%' }
       end
       before do
-        Worker::MarketTicker.new.process(trade1.as_json, nil, nil)
-        Worker::MarketTicker.new.process(trade2.as_json, nil, nil)
+        trade1.write_to_influx
+        trade2.write_to_influx
       end
 
       it 'returns market tickers' do
         get '/api/v2/public/markets/btcusd/tickers'
         expect(response).to be_successful
-        expect(JSON.parse(response.body)['ticker']).to eq (expected_ticker)
+        expect(JSON.parse(response.body)['ticker']).to include(expected_ticker)
       end
     end
   end
@@ -459,8 +667,8 @@ describe API::V2::Public::Markets, type: :request do
       create(
         :order_ask,
         :btcusd,
-        price: '12.326'.to_d,
-        volume: '123.123456789',
+        price: '12.32'.to_d,
+        volume: '123.12345678',
         member: member
       )
     end
@@ -469,22 +677,43 @@ describe API::V2::Public::Markets, type: :request do
       create(
         :order_bid,
         :btcusd,
-        price: '12.326'.to_d,
-        volume: '123.123456789',
+        price: '12.32'.to_d,
+        volume: '123.12345678',
         member: member
       )
     end
 
     let(:market) { :btcusd }
 
-    let!(:ask_trade) { create(:trade, :btcusd, ask: ask, created_at: 2.days.ago) }
-    let!(:bid_trade) { create(:trade, :btcusd, bid: bid, created_at: 1.day.ago) }
+    let!(:ask_trade) { create(:trade, :btcusd, maker_order: ask, created_at: 2.days.ago) }
+    let!(:bid_trade) { create(:trade, :btcusd, taker_order: bid, created_at: 1.day.ago) }
+
+
+    after do
+      delete_measurments('trades')
+    end
+
+    before do
+      ask_trade.write_to_influx
+      bid_trade.write_to_influx
+    end
 
     it 'returns all recent trades' do
       get "/api/v2/public/markets/#{market}/trades"
 
       expect(response).to be_successful
       expect(JSON.parse(response.body).size).to eq 2
+    end
+
+    context 'market name with dot' do
+      let!(:currency) { create(:currency, :xagm_cx) }
+      let!(:market) { create(:market, :xagm_cxusd) }
+
+      it 'returns information about specified market' do
+        get "/api/v2/public/markets/#{market.id}/trades"
+        expect(response).to be_successful
+        expect(JSON.parse(response.body).size).to eq 0
+      end
     end
 
     it 'returns 1 trade' do
@@ -501,21 +730,19 @@ describe API::V2::Public::Markets, type: :request do
       expect(JSON.parse(response.body).first['id']).to eq bid_trade.id
     end
 
-    it 'gets trades by page and limit' do
-      create(:trade, :btcusd, bid: bid, created_at: 6.hours.ago)
+    it 'gets trades by limit' do
+      trade = create(:trade, :btcusd, taker_order: bid, created_at: 6.hours.ago)
+      trade.write_to_influx
 
-      get "/api/v2/public/markets/#{market}/trades", params: { limit: 2, page: 1, order_by: 'asc'}
+      get "/api/v2/public/markets/#{market}/trades", params: { limit: 2, order_by: 'asc'}
 
       expect(response).to be_successful
-      expect(response.headers.fetch('Total')).to eq '3'
-
       expect(JSON.parse(response.body).count).to eq 2
 
-      get "/api/v2/public/markets/#{market}/trades", params: { market: 'btcusd', limit: 1, page: 2, order_by: 'asc' }
+      get "/api/v2/public/markets/#{market}/trades", params: { market: 'btcusd', limit: 3, order_by: 'asc' }
 
       expect(response).to be_successful
-      expect(response.headers.fetch('Total')).to eq '3'
-      expect(JSON.parse(response.body).count).to eq 1
+      expect(JSON.parse(response.body).count).to eq 3
     end
 
     it 'validates market param' do
@@ -528,12 +755,6 @@ describe API::V2::Public::Markets, type: :request do
       get "/api/v2/public/markets/#{market}/trades", params: { limit: 1001 }
       expect(response).to have_http_status 422
       expect(response).to include_api_error('public.trade.invalid_limit')
-    end
-
-    it 'validates page param' do
-      get "/api/v2/public/markets/#{market}/trades", params: { page: -1 }
-      expect(response).to have_http_status 422
-      expect(response).to include_api_error('public.trade.non_positive_page')
     end
   end
 end

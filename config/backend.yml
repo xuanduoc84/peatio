@@ -11,6 +11,19 @@ services:
     ports:
       - "3306:3306"
 
+  influxdb:
+    image: influxdb:1.7.8
+    container_name: influxdb
+    ports:
+      - "8083:8083"
+      - "8086:8086"
+    volumes:
+      - ../db/influxdb.sql:/influxdb.sql
+      - influx_data:/var/lib/influxdb
+    environment:
+       INFLUXDB_ADMIN_ENABLED: "true"
+
+
   redis:
     image: redis:4.0
     volumes:
@@ -24,6 +37,7 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq
     ports:
       - "5672:5672"
+      - "15672:15672"
 
   auth:
     image: quay.io/openware/authz-dummy:0.1.1
@@ -32,10 +46,11 @@ services:
     environment:
       DUMMY_USER_EMAIL: "admin@barong.io"
       DUMMY_USER_UID: "U123456789"
-      DUMMY_USER_ROLE: "admin"
+      DUMMY_USER_ROLE: "superadmin"
       DUMMY_USER_LEVEL: 3
       DUMMY_USER_STATE: "active"
       DUMMY_JWT_PRIVKEY_FILE: "/secrets/rsa-key"
+      DUMMY_JWT_TTL: 86400
     volumes:
       - ./secrets:/secrets:ro
 
@@ -69,6 +84,7 @@ services:
       VAULT_ADDR: http://vault:8200
 
 volumes:
+  influx_data:
   db_data:
   rabbitmq_data:
   redis_data:

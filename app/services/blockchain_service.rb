@@ -1,116 +1,159 @@
-# encoding: UTF-8
-# frozen_string_literal: true
+class BlockchainService
+  Error = Class.new(StandardError)
+  BalanceLoadError = Class.new(StandardError)
 
-module BlockchainService
-  Error                  = Class.new(StandardError) # TODO: Rename to Exception.
-  ConnectionRefusedError = Class.new(StandardError) # TODO: Remove this.
+  attr_reader :blockchain, :whitelisted_smart_contract, :currencies, :adapter
 
-  class << self
-    #
-    # Returns Service for given blockchain key.
-    #
-    # @param key [String, Symbol]
-    #   The blockchain key.
-    def [](key)
-      blockchain = Blockchain.find_by_key(key)
-      if blockchain.try(:client).present?
-        "BlockchainService::#{blockchain.client.capitalize}"
-      end.constantize.new(blockchain)
+  def initialize(blockchain)
+    @blockchain = blockchain
+    @currencies = blockchain.currencies.deposit_enabled
+    @whitelisted_addresses = blockchain.whitelisted_smart_contracts.active
+    @adapter = Peatio::Blockchain.registry[blockchain.client.to_sym].new
+    @adapter.configure(server: @blockchain.server,
+                       currencies: @currencies.map(&:to_blockchain_api_settings),
+                       whitelisted_addresses: @whitelisted_addresses)
+  end
+
+  def latest_block_number
+    @latest_block_number ||= @adapter.latest_block_number
+  end
+
+  def load_balance!(address, currency_id)
+    @adapter.load_balance_of_address!(address, currency_id)
+  rescue Peatio::Blockchain::Error => e
+    report_exception(e)
+    raise BalanceLoadError
+  end
+
+  def case_sensitive?
+    @adapter.features[:case_sensitive]
+  end
+
+  def supports_cash_addr_format?
+    @adapter.features[:cash_addr_format]
+  end
+
+  def fetch_transaction(transaction)
+    tx = Peatio::Transaction.new(currency_id: transaction.currency_id,
+                                 hash: transaction.txid,
+                                 to_address: transaction.rid,
+                                 amount: transaction.amount)
+    if @adapter.respond_to?(:fetch_transaction)
+      @adapter.fetch_transaction(tx)
+    else
+      tx
     end
   end
 
-  class Base
+  def process_block(block_number)
+    block = @adapter.fetch_block!(block_number)
+    deposits = filter_deposits(block)
+    withdrawals = filter_withdrawals(block)
+    # TODO: Process Transactions with `pending` status
 
-    attr_reader :blockchain, :client
+    accepted_deposits = []
+    ActiveRecord::Base.transaction do
+      accepted_deposits = deposits.map(&method(:update_or_create_deposit)).compact
+      withdrawals.each(&method(:update_withdrawal))
+    end
+    accepted_deposits.each(&:process!)
+    block
+  end
 
-    def initialize(blockchain)
-      @blockchain = blockchain
-      @client     = BlockchainClient[blockchain.key]
+  # Resets current cached state.
+  def reset!
+    @latest_block_number = nil
+  end
+
+  def update_height(block_number)
+    raise Error, "#{blockchain.name} height was reset." if blockchain.height != blockchain.reload.height
+
+    # NOTE: We use update_column to not change updated_at timestamp
+    # because we use it for detecting blockchain configuration changes see Workers::Daemon::Blockchain#run.
+    blockchain.update_column(:height, block_number) if latest_block_number - block_number >= blockchain.min_confirmations
+  end
+
+  private
+
+  def filter_deposits(block)
+    addresses = PaymentAddress.where(wallet: Wallet.deposit.with_currency(@currencies.codes), address: block.transactions.map(&:to_address)).pluck(:address)
+    block.select { |transaction| transaction.to_address.in?(addresses) }
+  end
+
+  def filter_withdrawals(block)
+    # TODO: Process addresses in batch in case of huge number of confirming withdrawals.
+    withdraw_txids = Withdraws::Coin.confirming.where(currency: @currencies).pluck(:txid)
+    block.select { |transaction| transaction.hash.in?(withdraw_txids) }
+  end
+
+  def update_or_create_deposit(transaction)
+    if transaction.amount < Currency.find(transaction.currency_id).min_deposit_amount
+      # Currently we just skip tiny deposits.
+      Rails.logger.info do
+        "Skipped deposit with txid: #{transaction.hash} with amount: #{transaction.hash}"\
+        " to #{transaction.to_address} in block number #{transaction.block_number}"
+      end
+      return
     end
 
-    protected
+    # Fetch transaction from a blockchain that has `pending` status.
+    transaction = adapter.fetch_transaction(transaction) if @adapter.respond_to?(:fetch_transaction) && transaction.status.pending?
+    return unless transaction.status.success?
 
-    def save_block(block, latest_block_number)
-      block[:deposits].map { |d| d[:txid] }.join(',').tap do |txids|
-        Rails.logger.info { "Deposit trancations in block #{block[:id]}: #{txids}" }
+    address = PaymentAddress.find_by(wallet: Wallet.deposit_wallet(transaction.currency_id), address: transaction.to_address)
+    return if address.blank?
+
+    # Skip deposit tx if there is tx for deposit collection process
+    # TODO: select only pending transactions
+    tx_collect = Transaction.where(txid: transaction.hash, reference_type: 'Deposit')
+    return if tx_collect.present?
+
+    if transaction.from_addresses.blank? && adapter.respond_to?(:transaction_sources)
+      transaction.from_addresses = adapter.transaction_sources(transaction)
+    end
+
+    deposit =
+      Deposits::Coin.find_or_create_by!(
+        currency_id: transaction.currency_id,
+        txid: transaction.hash,
+        txout: transaction.txout
+      ) do |d|
+        d.address = transaction.to_address
+        d.amount = transaction.amount
+        d.member = address.member
+        d.from_addresses = transaction.from_addresses
+        d.block_number = transaction.block_number
       end
 
-      block[:withdrawals].map { |d| d[:txid] }.join(',').tap do |txids|
-        Rails.logger.info { "Withdraw trancations in block #{block[:id]}: #{txids}" }
-      end
+    deposit.update_column(:block_number, transaction.block_number) if deposit.block_number != transaction.block_number
+    # Manually calculating deposit confirmations, because blockchain height is not updated yet.
+    if latest_block_number - deposit.block_number >= @blockchain.min_confirmations && deposit.accept!
+      deposit
+    else
+      nil
+    end
+  end
 
-      ActiveRecord::Base.transaction do
-        update_or_create_deposits!(block[:deposits])
-        update_withdrawals!(block[:withdrawals])
-        update_height(block[:id], latest_block_number)
-      end
+  def update_withdrawal(transaction)
+    withdrawal =
+      Withdraws::Coin.confirming
+        .find_by(currency_id: transaction.currency_id, txid: transaction.hash)
+
+    # Skip non-existing in database withdrawals.
+    if withdrawal.blank?
+      Rails.logger.info { "Skipped withdrawal: #{transaction.hash}." }
+      return
     end
 
-    def update_or_create_deposits!(deposits)
-      deposits.each do |deposit_hash|
-        # If deposit doesn't exist create it.
-        deposit = Deposits::Coin
-                    .where(currency: currencies)
-                    .find_or_create_by!(deposit_hash.slice(:txid, :txout)) do |deposit|
-                      deposit.assign_attributes(deposit_hash)
-                    end
+    withdrawal.update_column(:block_number, transaction.block_number)
 
-        deposit.update_column(:block_number, deposit_hash.fetch(:block_number))
-        if deposit.confirmations >= blockchain.min_confirmations
-          deposit.collect! if deposit.accept!
-        end
-      end
-    end
-
-    def update_withdrawals!(withdrawals)
-      withdrawals.each do |withdrawal_hash|
-
-        withdrawal = Withdraws::Coin
-                       .confirming
-                       .where(currency: currencies)
-                       .find_by(withdrawal_hash.slice(:txid)) do |withdrawal|
-                         withdrawal.assign_attributes(withdrawal_hash)
-                       end
-
-        # Skip non-existing in database withdrawals.
-        if withdrawal.blank?
-          Rails.logger.info { "Skipped withdrawal: #{withdrawal_hash[:txid]}." }
-          next
-        end
-
-        withdrawal.update_column(:block_number, withdrawal_hash.fetch(:block_number))
-        withdrawal.success! if withdrawal.confirmations >= blockchain.min_confirmations
-      end
-    end
-
-    def update_height(block_id, latest_block)
-      raise Error, "#{blockchain.name} height was reset." if blockchain.height != blockchain.reload.height
-      blockchain.update(height: block_id) if latest_block - block_id >= blockchain.min_confirmations
-    end
-
-    def currencies
-      blockchain.currencies
-    end
-
-    def payment_addresses_where(options = {})
-      options = { currency: currencies }.merge(options)
-      PaymentAddress
-        .includes(:currency)
-        .where(options)
-        .each do |payment_address|
-          yield payment_address if block_given?
-        end
-    end
-
-    def wallets_where(options = {})
-      options = { currency: currencies,
-                  kind: %i[cold warm hot] }.merge(options)
-      Wallet
-        .includes(:currency)
-        .where(options)
-        .each do |wallet|
-          yield wallet if block_given?
-        end
+    # Fetch transaction from a blockchain that has `pending` status.
+    transaction = adapter.fetch_transaction(transaction) if @adapter.respond_to?(:fetch_transaction) && transaction.status.pending?
+    # Manually calculating withdrawal confirmations, because blockchain height is not updated yet.
+    if transaction.status.failed?
+      withdrawal.fail!
+    elsif transaction.status.success? && latest_block_number - withdrawal.block_number >= @blockchain.min_confirmations
+      withdrawal.success!
     end
   end
 end

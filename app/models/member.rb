@@ -6,24 +6,35 @@ require 'securerandom'
 class Member < ApplicationRecord
   has_many :orders
   has_many :accounts
-  has_many :payment_addresses, through: :accounts
+  has_many :stats_member_pnl
+  has_many :payment_addresses
   has_many :withdraws, -> { order(id: :desc) }
   has_many :deposits, -> { order(id: :desc) }
+  has_many :beneficiaries, -> { order(id: :desc) }
 
   scope :enabled, -> { where(state: 'active') }
 
   before_validation :downcase_email
 
+  validates :uid, length: { maximum: 32 }
   validates :email, presence: true, uniqueness: true, email: true
   validates :level, numericality: { greater_than_or_equal_to: 0 }
-  validates :role, inclusion: { in: %w[member admin] }
+  validates :role, inclusion: { in: ::Ability.roles }
 
-  after_create :touch_accounts
+  before_create { self.group = self.group.strip.downcase }
 
-  attr_readonly :email
+  class << self
+    def groups
+      TradingFee.distinct.pluck(:group)
+    end
+  end
 
   def trades
-    Trade.where('bid_member_id = ? OR ask_member_id = ?', id, id)
+    Trade.where('maker_id = ? OR taker_id = ?', id, id)
+  end
+
+  def role
+    super&.inquiry
   end
 
   def admin?
@@ -31,22 +42,26 @@ class Member < ApplicationRecord
   end
 
   def get_account(model_or_id_or_code)
-    accounts.with_currency(model_or_id_or_code).first.yield_self do |account|
-      touch_accounts unless account
-      accounts.with_currency(model_or_id_or_code).first
+    if model_or_id_or_code.is_a?(String) || model_or_id_or_code.is_a?(Symbol)
+      accounts.find_or_create_by(currency_id: model_or_id_or_code)
+    elsif model_or_id_or_code.is_a?(Currency)
+      accounts.find_or_create_by(currency: model_or_id_or_code)
+    end
+  # Thread Safe Account creation
+  rescue ActiveRecord::RecordNotUnique
+    if model_or_id_or_code.is_a?(String) || model_or_id_or_code.is_a?(Symbol)
+      accounts.find_by(currency_id: model_or_id_or_code)
+    elsif model_or_id_or_code.is_a?(Currency)
+      accounts.find_by(currency: model_or_id_or_code)
     end
   end
-  alias :ac :get_account
 
+  # @deprecated
   def touch_accounts
     Currency.find_each do |currency|
       next if accounts.where(currency: currency).exists?
       accounts.create!(currency: currency)
     end
-  end
-
-  def trigger_pusher_event(event, data)
-    self.class.trigger_pusher_event(self, event, data)
   end
 
   def balance_for(currency:, kind:)
@@ -61,15 +76,53 @@ class Member < ApplicationRecord
 
   def legacy_balance_for(currency:, kind:)
     if kind.to_sym == :main
-      ac(currency).balance
+      get_account(currency).balance
     elsif kind.to_sym == :locked
-      ac(currency).locked
+      get_account(currency).locked
     else
       raise Operations::Exception, "Account for #{options} doesn't exists."
     end
   end
 
-private
+  def revert_trading_activity!(trades)
+    trades.each(&:revert_trade!)
+  end
+
+  def payment_address(wallet_id, remote = false)
+    wallet = Wallet.find(wallet_id)
+
+    return if wallet.blank?
+
+    pa = PaymentAddress.find_by(member: self, wallet: wallet, remote: remote)
+
+    if pa.blank?
+      pa = payment_addresses.create!(wallet: wallet)
+    elsif pa.address.blank?
+      pa.enqueue_address_generation
+    end
+
+    pa
+  end
+
+  # Attempts to create additional deposit address for account.
+  def payment_address!(wallet_id, remote = false)
+    wallet = Wallet.find(wallet_id)
+
+    return if wallet.blank?
+
+    pa = PaymentAddress.find_by(member: self, wallet: wallet)
+
+    # The address generation process is in progress.
+    if pa.present? && pa.address.blank?
+      pa
+    else
+      # allows user to have multiple addresses
+      pa = payment_addresses.create!(wallet: wallet, remote: remote)
+    end
+    pa
+  end
+
+  private
 
   def downcase_email
     self.email = email.try(:downcase)
@@ -77,7 +130,15 @@ private
 
   class << self
     def uid(member_id)
-      Member.find_by(id: member_id).uid
+      Member.find_by(id: member_id)&.uid
+    end
+
+    def find_by_username_or_uid(uid_or_username)
+      if Member.find_by(uid: uid_or_username).present?
+        Member.find_by(uid: uid_or_username)
+      elsif Member.find_by(username: uid_or_username).present?
+        Member.find_by(username: uid_or_username)
+      end
     end
 
     # Create Member object from payload
@@ -87,6 +148,7 @@ private
     #   :sub=>"session",
     #   :aud=>["peatio"],
     #   :email=>"admin@barong.io",
+    #   :username=>"barong",
     #   :uid=>"U123456789",
     #   :role=>"admin",
     #   :state=>"active",
@@ -99,7 +161,9 @@ private
     def from_payload(p)
       params = filter_payload(p)
       validate_payload(params)
-      member = Member.find_or_create_by(uid: p[:uid], email: p[:email]) do |m|
+      member = Member.find_or_create_by(uid: p[:uid]) do |m|
+        m.email = params[:email]
+        m.username = params[:username]
         m.role = params[:role]
         m.state = params[:state]
         m.level = params[:level]
@@ -111,7 +175,7 @@ private
 
     # Filter and validate payload params
     def filter_payload(payload)
-      payload.slice(:email, :uid, :role, :state, :level)
+      payload.slice(:email, :username, :uid, :role, :state, :level)
     end
 
     def validate_payload(p)
@@ -133,40 +197,40 @@ private
     end
 
     def search(field: nil, term: nil)
+      term = "%#{term}%"
       case field
-      when 'email', 'uid'
-        where("members.#{field} LIKE ?", "%#{term}%")
+      when 'email'
+        where("email LIKE ?", term)
+      when 'uid'
+        where('uid LIKE ?', term)
       when 'wallet_address'
-        joins(:payment_addresses).where('payment_addresses.address LIKE ?', "%#{term}%")
+        joins(:payment_addresses).where('payment_addresses.address LIKE ?', term)
       else
         all
       end.order(:id).reverse_order
-    end
-
-    def trigger_pusher_event(member_or_id, event, data)
-      AMQPQueue.enqueue :pusher_member, \
-        member_id: self === member_or_id ? member_or_id.id : member_or_id,
-        event:     event,
-        data:      data
     end
   end
 end
 
 # == Schema Information
-# Schema version: 20181027192001
+# Schema version: 20201207134745
 #
 # Table name: members
 #
 #  id         :integer          not null, primary key
-#  uid        :string(12)       not null
+#  uid        :string(32)       not null
 #  email      :string(255)      not null
+#  username   :string(255)
 #  level      :integer          not null
 #  role       :string(16)       not null
+#  group      :string(32)       default("vip-0"), not null
 #  state      :string(16)       not null
 #  created_at :datetime         not null
 #  updated_at :datetime         not null
 #
 # Indexes
 #
-#  index_members_on_email  (email) UNIQUE
+#  index_members_on_email     (email) UNIQUE
+#  index_members_on_uid       (uid) UNIQUE
+#  index_members_on_username  (username) UNIQUE
 #

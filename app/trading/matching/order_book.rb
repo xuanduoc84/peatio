@@ -13,12 +13,19 @@ module Matching
       @side   = side.to_sym
       @limit_orders = RBTree.new
       @market_orders = RBTree.new
-
-      @broadcast = options.has_key?(:broadcast) ? options[:broadcast] : true
-      broadcast(action: 'new', market: @market, side: @side)
+      @on_change = options[:on_change]
 
       singleton = class<<self;self;end
       singleton.send :define_method, :limit_top, self.class.instance_method("#{@side}_limit_top")
+    end
+
+    def notify_change(market, side, price, amount=nil)
+      return unless @on_change
+
+      amount ||= yield
+      @on_change.call(market, side, price, amount)
+    rescue StandardError => e
+      report_exception(e)
     end
 
     def best_limit_price
@@ -26,7 +33,12 @@ module Matching
     end
 
     def top
-      @market_orders.empty? ? limit_top : @market_orders.first[1]
+      unless @market_orders.empty?
+        order = @market_orders.first[1]
+        raise MarketOrderbookError.new(order, 'market order in orderbook detected')
+      end
+
+      limit_top
     end
 
     def fill_top(trade_price, trade_volume, trade_funds)
@@ -37,7 +49,7 @@ module Matching
       if order.filled?
         remove order
       else
-        broadcast(action: 'update', order: order.attributes)
+        notify_change(@market, @side, trade_price) { @limit_orders[trade_price]&.total }
       end
     end
 
@@ -51,25 +63,26 @@ module Matching
     end
 
     def add(order)
-      raise InvalidOrderError, "volume is zero" if order.volume <= ZERO
+      raise OrderError.new(order, 'volume is less than or equal to zero') if order.volume <= ZERO
 
       case order
       when LimitOrder
         @limit_orders[order.price] ||= PriceLevel.new(order.price)
         @limit_orders[order.price].add order
+        notify_change(@market, @side, order.price) { @limit_orders[order.price]&.total }
       when MarketOrder
-        @market_orders[order.id] = order
+        raise MarketOrderbookError.new(order, 'market order adding to orderbook detected')
       else
         raise ArgumentError, "Unknown order type"
       end
-
-      broadcast(action: 'add', order: order.attributes)
     end
 
     def remove(order)
       case order
       when LimitOrder
-        remove_limit_order(order)
+        updated_order = remove_limit_order(order)
+        notify_change(@market, @side, order.price) { @limit_orders[order.price]&.total }
+        return updated_order
       when MarketOrder
         remove_market_order(order)
       else
@@ -99,14 +112,12 @@ module Matching
       price_level.remove order
       @limit_orders.delete(order.price) if price_level.empty?
 
-      broadcast(action: 'remove', order: order.attributes)
       order
     end
 
     def remove_market_order(order)
       if order = @market_orders[order.id]
         @market_orders.delete order.id
-        broadcast(action: 'remove', order: order.attributes)
         order
       end
     end
@@ -122,12 +133,5 @@ module Matching
       price, level = @limit_orders.last
       level.top
     end
-
-    def broadcast(data)
-      return unless @broadcast
-      Rails.logger.debug { "orderbook broadcast: #{data.inspect}" }
-      AMQPQueue.enqueue(:slave_book, data, {persistent: false})
-    end
-
   end
 end

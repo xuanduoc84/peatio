@@ -26,8 +26,8 @@ describe Serializers::EventAPI::OrderCompleted do
   let(:completed_at) { Time.current }
 
   before do
-    seller.ac(:btc).plus_funds('100.0'.to_d)
-    seller.ac(:btc).lock_funds('100.0'.to_d)
+    seller.get_account(:btc).plus_funds('100.0'.to_d)
+    seller.get_account(:btc).lock_funds('100.0'.to_d)
   end
 
   before { OrderAsk.any_instance.expects(:created_at).returns(created_at).at_least_once }
@@ -43,7 +43,8 @@ describe Serializers::EventAPI::OrderCompleted do
       trader_uid:              seller.uid,
       income_unit:             'usd',
       income_fee_type:         'relative',
-      income_fee_value:        '0.0015',
+      income_maker_fee_value:  '0.0015',
+      income_taker_fee_value:  '0.0015',
       outcome_unit:            'btc',
       outcome_fee_type:        'relative',
       outcome_fee_value:       '0.0',

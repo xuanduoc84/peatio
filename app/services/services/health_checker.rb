@@ -33,12 +33,11 @@ module Services
       end
 
       def check_redis
-        redis = Rails.cache.instance_variable_get(:@data)
-        redis.ping == 'PONG'
+        Rails.cache.redis.ping == 'PONG'
       end
 
       def check_rabbitmq
-        Bunny.run(AMQPConfig.connect) { |c| c.connected? }
+        Bunny.run(AMQP::Config.connect) { |c| c.connected? }
       end
     end
   end

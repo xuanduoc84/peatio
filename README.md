@@ -1,29 +1,65 @@
-# Peatio - an open-source crypto currency exchange
+![Cryptocurrency Exchange Platform - Baseapp](https://github.com/openware/meta/raw/main/images/github_peatio.png)
 
-[![Build Status](https://travis-ci.org/rubykube/peatio.svg?branch=master)](https://travis-ci.org/rubykube/peatio)
+<h3 align="center">
+<a href="https://www.openware.com/sdk/docs.html#peatio">Guide</a> <span>&vert;</span> 
+<a href="https://www.openware.com/sdk/api/peatio/peatio-user-api-v2.html">API Docs</a> <span>&vert;</span> 
+<a href="https://www.openware.com/">Consulting</a> <span>&vert;</span> 
+<a href="https://t.me/peatio">Community</a>
+</h3>
+<h6 align="center">Component part of <a href="https://github.com/openware/opendax">OpenDAX Trading Platform</a></h6>
+
+---
+
+# Peatio - Cryptocurrency Exchange Software
+
+[![Build Status](https://ci.openware.work/api/badges/openware/peatio/status.svg)](https://ci.openware.work/openware/peatio)
 [![Telegram Chat](https://cdn.rawgit.com/Patrolavia/telegram-badge/8fe3382b/chat.svg)](https://t.me/peatio)
 
-## [Peatio.tech](https://www.peatio.tech) Introduction
+## What is Peatio
 
-Peatio is a free and open-source crypto currency exchange implementation with the Rails framework.
-Peatio.tech is a fork of Peatio designed for micro-services architecture. We have simplified the code
+Peatio is a free and open-source crypto-currency exchange implementation with the Rails framework.
+This is a fork of Peatio designed for micro-services architecture. We have simplified the code
 in order to use only Peatio API with external frontend and server components.
+
+Peatio is the core accounting component and configuration for markets; it is part of OpenDAX system.
+
+## Getting Started
+
+OpenDAX is a container distribution, the fastest way to install the full stack is using [OpenDAX](https://github.com/openware/opendax)
+OpenDAX can be installed under 15 minutes on any Linux / Mac OS X environment with Docker.
+
+```
+# To install
+git clone https://github.com/openware/opendax.git
+# Follow the README instructions
+# Configure config/app.yml
+bundle install
+bundle exec rake service:all
+# Open your browser on www.app.local (please it in /etc/hosts)
+```
 
 To build your own exchange you should now run Peatio as a backend instead of forking the repository,
 and extend it using other microservices such as [Barong](https://www.github.com/rubykube/barong).
 
+## System Overview
+
+![Cryptocurrency Exchange Platform overview](https://github.com/openware/meta/raw/main/images/system.png)
+
+This is a service oriented architecture; the system is designed to be customized by creating Applogic which is your api code.
+Barong will dispatch the traffic on your api to extend the current system.
+
 ## Mission
 
-Our mission is to build an open-source crypto currency exchange with a high performance trading engine and incomparable security. We are moving toward dev/ops best practices of running an enterprise grade exchange.
+Our mission is to build an open-source [crypto exchange software](https://www.openware.com) with a high performance trading engine and incomparable security. We are moving toward dev/ops best practices of running an enterprise grade exchange.
 
 We provide webinar or on site training for installing, configuring and administration best practices of Peatio.
-Feel free to contact us for joining the next training session: [Peatio.tech](https://www.peatio.tech)
+Feel free to contact us for joining the next training session: [Openware.com](https://www.openware.com)
 
 Help is greatly appreciated, feel free to submit pull-requests or open issues.
 
 ## Things You Should Know
 
-**RUNNING AN EXCHANGE IS HARD.**
+**RUNNING A CRYPTO CURRENCY EXCHANGE IS HARD.**
 
 This repository is not a turn key solution and will require engineering and design of security process by your company, with or without our assistance. This repository is one component among many we recommend using for composing an enterprise grade exchange. It is highly recommended to deploy a UAT environment and build automated tests for your needs, including Functional tests, Smoke tests and Security vulnerability scans. You may not need to have an active developer on Peatio source code, however, we recommend the following team setup: 1 dev/ops, 3 frontend developers (react / angular), 2 QA engineers, 1 Security Officer.
 
@@ -44,6 +80,7 @@ You must know what you're doing, there's no shortcut. Please get prepared before
 * Designed as high performance crypto currency exchange
 * Built-in high performance matching-engine
 * Built-in multiple wallet support (e.g. deposit, hot, warm and cold)
+* Built-in [plugable coin API](https://www.openware.com/sdk/2.6/docs/peatio/coins/development.html)
 * Build-in Management API - server-to-server API with high privileges
 * Build-in RabbitMQ Event API
 * Usability and scalability
@@ -54,12 +91,12 @@ You must know what you're doing, there's no shortcut. Please get prepared before
 * Powerful admin dashboard and management tools
 * Highly configurable and extendable
 * Industry standard security out of box
-* Maintained by [peatio.tech](https://www.peatio.tech)
-* [KYC Verification](http://en.wikipedia.org/wiki/Know_your_customer) provided by [Barong](https://www.github.com/rubykube/barong)
+* Maintained by [Openware.com](https://www.openware.com)
+* [KYC Verification](http://en.wikipedia.org/wiki/Know_your_customer) provided by [Barong](https://www.github.com/openware/barong)
 
 ## Contribute
 
-Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to contribute
+Please see [CONTRIBUTING.md](https://www.openware.com/sdk/2.6/docs/peatio/contributing.html) for details on how to contribute
 issues, fixes, and patches to this project.
 
 ## Getting Started
@@ -73,12 +110,12 @@ Otherwise we advice to use [microkube based environment](#local-development-envi
 #### Prerequisites
 * [Docker](https://docs.docker.com/install/) installed
 * [Docker compose](https://docs.docker.com/compose/install/) installed
-* Ruby 2.5.1
-* Rails 4.2+
+* Ruby 2.6.5
+* Rails 5.2.3+
 
 ## Installation
 
-### Local development without microkube
+### Local development install
 
 1. Set up initial configuration `./bin/setup`
 2. Start peatio daemons `god -c lib/daemons/daemons.god`
@@ -88,44 +125,37 @@ Otherwise we advice to use [microkube based environment](#local-development-envi
 127.0.0.1 peatio.app.local
 127.0.0.1 barong.app.local
 ```
-4. Start rails server `JWT_PUBLIC_KEY=$(cat config/secrets/rsa-key.pub| base64 -w0) rails s -b0.0.0.0` 
+4. Start rails server `JWT_PUBLIC_KEY=$(cat config/secrets/rsa-key.pub| base64 -w0) rails s -b 0.0.0.0` 
 (`base64 -b0` for macOS)
 
 
-### Local development environment with microkube:
+### Local development environment with docker compose:
 
-We suggest you to start using Peatio by installing [Microkube](https://github.com/rubykube/microkube).
-[Microkube](https://github.com/rubykube/microkube) which is based on
+We suggest you to start using Peatio by installing [OpenDAX](https://github.com/openware/opendax).
+[OpenDAX](https://github.com/openware/opendax) which is based on
 [Docker containers](https://www.docker.com/what-docker) is a convenient and straightforward way to start
-Peatio development environment.
+Peatio crypto exchange software development environment.
 
 #### Prerequisites
 * [Docker](https://docs.docker.com/install/) installed
 * [Docker compose](https://docs.docker.com/compose/install/) installed
 
-#### Prepare the microkube
+#### Start OpenDAX ready to use
 
-Follow microkube [README](https://github.com/rubykube/microkube) for the best Peatio installation experience.
+Follow [OpenDAX](https://github.com/openware/opendax) documentation for the latest Peatio installation information.
 
-### Local development environment with workbench (DEPRECATED since 2.0):
+#### [Barong](https://github.com/openware/barong)
 
-[Workbench](https://github.com/rubykube/workbench) is legacy way for running Peatio locally.
-Probably Workbench support will be removed soon. We advice to use [Microkube](https://github.com/rubykube/microkube)
-which is more lightweight environment.
+Barong is an essential part of Openware [crypto exchange software](https://www.openware.com) stack. It's providing the authentication service, it provides KyC and 2FA features out of the box.
 
-#### [Barong](https://github.com/rubykube/barong)
-
-Barong is an essential part of Rubykube Peatio. It is a KYC OAuth 2.0 provider. Barong replace the KYC, 2FA, Phone verification from legacy Peatio.
-Barong manage roles and kyc level across all applications from the RKCP. It's easy to extend by using the EventAPI or Rest API.
+Barong manages roles and kyc level across all applications from the OpenDAX stack. It can be easily extended using Rest Management API and Event API.
 
 ##### Barong key features
 
 * KYC Verification for individuals
 * SMS and Google two-factor authentication
-* OAuth 2.0 provider
 * Transaction Signature support
-* Supply JWT tokens to frontend and mobile app
-
+* Implement JWT standard to authenticate users of every microservice of the OpenDAX stack
 
 Start barong:
 
@@ -146,12 +176,6 @@ $> docker-compose up -d peatio
 ```
 
 After all of that you can start using Peatio in your browser just by following one of the hosts which you added earlier.
-
-
-### Production setup:
-
-* [Deploy production cluster with kite](https://github.com/rubykube/kite/blob/master/README.md)
-* [Kubernetes deployment architecture](docs/architecture.md)
 
 ## API
 
@@ -181,20 +205,20 @@ Chat with us and other community members on Telegram.
 ### GitHub
 Peatio issues
 
-If you spot a bug, then please raise an issue in our main GitHub project (rubykube/peatio); likewise, if you have developed a cool new feature or improvement in your Rubykube Peatio fork, then send us a pull request!
-If you want to brainstorm a potential new feature, then the Rubykube Discourse Forum (see above) is probably a better place to start.
+If you spot a bug, then please raise an issue in our main GitHub project (Openware Peatio)[https://github.com/openware/peatio/]; likewise, if you have developed a new feature or an improvement in your Rubykube Peatio fork, then send us a pull request!
+If you want to brainstorm a potential new feature, then the Telegram group is the best place to start (see above).
 
 ### Email
-hello@peatio.tech
+hello@openware.com
 
 If you want to talk directly to us (e.g. about a commercially sensitive issue), email is the easiest way.
 
 ## Getting Support and Customization
 
 If you need help with running/deploying/customizing Peatio,
-you can contact us on [peatio.tech](https://www.peatio.tech).
+you can contact us on [Openware.com](https://www.openware.com).
 
-Contact us by email: [hello@peatio.tech](mailto:hello@peatio.tech)
+Contact us by email: [hello@openware.com](mailto:hello@openware.com)
 
 ## License
 
@@ -205,6 +229,3 @@ Peatio is released under the terms of the [MIT license](http://peatio.mit-licens
 [Peatio](http://en.wikipedia.org/wiki/Pixiu) (Chinese: 貔貅) is a Chinese mythical hybrid creature
 considered to be a very powerful protector to practitioners of Feng Shui.
 
-**[This illustration copyright for Peatio Team]**
-
-![logo](public/peatio.png)

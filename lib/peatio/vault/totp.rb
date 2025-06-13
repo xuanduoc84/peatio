@@ -7,7 +7,7 @@ module Vault
   module TOTP
     Error = Class.new(StandardError)
 
-    class <<self
+    class << self
 
       def server_available?
         read_data('sys/health').present?
@@ -15,12 +15,7 @@ module Vault
         false
       end
 
-      def exist?(uid)
-        read_data(totp_key(uid)).present?
-      end
-
       def validate?(uid, code)
-        return false unless exist?(uid)
         write_data(totp_code_key(uid), code: code).data[:valid]
       end
 
@@ -28,7 +23,7 @@ module Vault
         raise ArgumentError, 'Block is required' unless block_given?
         yield
       rescue Vault::VaultError => e
-        Rails.logger.error { e }
+        ::Rails.logger.error { e }
         if e.message.include?('connection refused')
           raise Error, '2FA server is under maintenance'
         end
@@ -42,12 +37,8 @@ module Vault
 
       private
 
-      def totp_key(uid)
-        "totp/keys/#{uid}"
-      end
-
       def totp_code_key(uid)
-        "totp/code/#{uid}"
+        "totp/code/#{Vault.application}_#{uid}"
       end
 
       def read_data(key)

@@ -12,6 +12,9 @@ FactoryBot.define do
       credit { 0 }
     end
 
+    reference_type { %w[order deposit trade].sample }
+
+    created_at { Faker::Date.between(3.days.ago, Date.today) }
   end
 
   factory :asset, class: Operations::Asset, parent: :operation do
@@ -46,7 +49,7 @@ FactoryBot.define do
 
       # Update legacy balance.
       after(:create) do |liability|
-        acc = liability.member.ac(liability.currency)
+        acc = liability.member.get_account(liability.currency)
         acc.plus_funds(liability.credit) unless liability.credit.zero?
         acc.sub_funds(liability.debit) unless liability.debit.zero?
       end

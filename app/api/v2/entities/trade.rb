@@ -22,20 +22,53 @@ module API
         )
 
         expose(
-          :volume,
+          :amount,
           documentation: {
             type: BigDecimal,
-            desc: 'Trade volume.'
+            desc: 'Trade amount.'
           }
         )
 
         expose(
-          :funds,
+          :total,
           documentation: {
             type: BigDecimal,
-            desc: 'Trade funds.'
+            desc: 'Trade total (Amount * Price).'
           }
         )
+
+        expose(
+          :fee_currency,
+          documentation: {
+            type: BigDecimal,
+            desc: 'Currency user\'s fees were charged in.'
+          },
+          if: ->(_, options) { options[:current_user] }
+        ) do |trade, options|
+            fee_currency(trade.order_for_member(options[:current_user]))
+          end
+
+        expose(
+          :fee,
+          documentation: {
+            type: BigDecimal,
+            desc: 'Percentage of fee user was charged for performed trade.'
+          },
+          if: ->(_, options) { options[:current_user] }
+        ) do |trade, options|
+            trade.order_fee(trade.order_for_member(options[:current_user]))
+          end
+
+        expose(
+          :fee_amount,
+          documentation: {
+            type: BigDecimal,
+            desc: 'Amount of fee user was charged for performed trade.'
+          },
+          if: ->(_, options) { options[:current_user] }
+        ) do |trade, options|
+            fee_amount(trade, trade.order_for_member(options[:current_user]))
+          end
 
         expose(
           :market_id,
@@ -59,10 +92,10 @@ module API
           :taker_type,
           documentation: {
             type: String,
-            desc: 'Trade maker order type (sell or buy).'
+            desc: 'Trade taker order type (sell or buy).'
           }
         ) do |trade, _options|
-            trade.ask_id > trade.bid_id ? :sell : :buy
+          trade.taker_order.side
         end
 
         expose(
@@ -73,8 +106,8 @@ module API
             desc: 'Trade side.'
           }
         ) do |trade, options|
-            options[:side] || trade.side(options[:current_user])
-          end
+          options[:side] || trade.side(options[:current_user])
+        end
 
         expose(
           :order_id,
@@ -84,14 +117,16 @@ module API
           },
           if: ->(_, options) { options[:current_user] }
         ) do |trade, options|
-            if trade.ask_member_id == options[:current_user].id
-              trade.ask_id
-            elsif trade.bid_member_id == options[:current_user].id
-              trade.bid_id
-            else
-              nil
-            end
-          end
+          trade.order_for_member(options[:current_user]).id
+        end
+
+        def fee_amount(trade, order)
+          trade.order_fee(order) * (order.side == 'buy' ? trade.amount : trade.total)
+        end
+
+        def fee_currency(order)
+          order.side == 'buy' ? order.ask : order.bid
+        end
       end
     end
   end

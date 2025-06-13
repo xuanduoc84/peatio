@@ -6,7 +6,6 @@ module API
     class AuthTest < Grape::API
       get('/auth_test') do
         authenticate!
-        current_user
       end
     end
 
@@ -27,6 +26,11 @@ describe API::V2::Helpers, type: :request do
         expect(response).to be_successful
       end
 
+      it 'should not return authorization header' do
+        api_get '/api/v2/auth_test', foo: 'bar', hello: 'world', token: token
+        expect(response.headers).not_to include('Authorization')
+      end
+
       it 'should set current user' do
         api_get '/api/v2/auth_test', foo: 'bar', hello: 'world', token: token
         expect(response.body).to eq member.reload.to_json
@@ -37,6 +41,18 @@ describe API::V2::Helpers, type: :request do
 
         expect(response.code).to eq '401'
         expect(response).to include_api_error('jwt.decode_and_verify')
+      end
+    end
+  end
+
+  context '#authentic_include_username?' do
+    let!(:member) { create(:member, username: 'foobar') }
+    let!(:token) { jwt_for(member, { username: 'foobar' }) }
+
+    context 'Authenticate using headers' do
+      it 'should set current user' do
+        api_get '/api/v2/auth_test', token: token
+        expect(response.body).to eq member.reload.to_json
       end
     end
   end

@@ -12,11 +12,28 @@ module Operations
     validates :member_id, absence: {
       if: ->(liability) { liability.account.scope != 'member' }
     }
+
+    # Notify third party trading engine about member balance update.
+    after_commit on: :create do
+      AMQP::Queue.enqueue(:events_processor,
+                        subject: :operation,
+                        payload: as_json_for_events_processor)
+    end
+
+    def as_json_for_events_processor
+      { code:           code,
+        currency:       currency_id,
+        member_id:      member_id,
+        reference_id:   reference_id,
+        reference_type: reference_type&.downcase,
+        debit:          debit,
+        credit:         credit }
+    end
   end
 end
 
 # == Schema Information
-# Schema version: 20190110164859
+# Schema version: 20201125134745
 #
 # Table name: liabilities
 #
@@ -24,8 +41,8 @@ end
 #  code           :integer          not null
 #  currency_id    :string(255)      not null
 #  member_id      :integer
-#  reference_id   :integer
 #  reference_type :string(255)
+#  reference_id   :integer
 #  debit          :decimal(32, 16)  default(0.0), not null
 #  credit         :decimal(32, 16)  default(0.0), not null
 #  created_at     :datetime         not null

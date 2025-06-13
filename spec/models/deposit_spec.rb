@@ -1,4 +1,3 @@
-# encoding: UTF-8
 # frozen_string_literal: true
 
 describe Deposit do
@@ -51,11 +50,41 @@ describe Deposit do
     expect(record.tid).to eq record.tid.upcase
   end
 
+  context 'calculates confirmations' do
+    let(:deposit) { create(:deposit_btc) }
+
+    it 'uses height from blockchain by default' do
+      deposit.blockchain.stubs(:processed_height).returns(100)
+      deposit.stubs(:block_number).returns(90)
+      expect(deposit.confirmations).to eql(10)
+    end
+  end
+
+  context :spread_between_wallets! do
+    let(:spread) do
+      [Peatio::Transaction.new(to_address: 'to-address-1', amount: 1.2),
+       Peatio::Transaction.new(to_address: 'to-address-2', amount: 2.5)]
+    end
+    let(:deposit) { create(:deposit_btc, amount: 3.7) }
+
+    before do
+      WalletService.any_instance.expects(:spread_deposit).returns(spread)
+    end
+
+    it 'spreads deposit between wallets' do
+      expect(deposit.spread).to eq([])
+      expect(deposit.spread_between_wallets!).to be_truthy
+      expect(deposit.reload.spread).to eq(spread.map(&:as_json).map(&:symbolize_keys))
+
+      expect(deposit.spread_between_wallets!).to be_falsey
+    end
+  end
+
   context :accept do
     context :record_complete_operations! do
       subject { deposit }
       it 'creates single asset operation' do
-        expect{ subject.accept! }.to change{ Operations::Asset.count }.by(1)
+        expect { subject.accept! }.to change { Operations::Asset.count }.by(1)
       end
 
       it 'credits assets with correct amount' do
@@ -65,7 +94,7 @@ describe Deposit do
       end
 
       it 'creates single liability operation' do
-        expect{ subject.accept! }.to change{ Operations::Liability.count }.by(1)
+        expect { subject.accept! }.to change { Operations::Liability.count }.by(1)
       end
 
       it 'credits liabilities with correct amount' do
@@ -76,13 +105,13 @@ describe Deposit do
 
       context 'zero deposit fee' do
         it 'doesn\'t create revenue operation' do
-          expect{ subject.accept! }.to_not change{ Operations::Revenue.count }
+          expect { subject.accept! }.to_not change { Operations::Revenue.count }
         end
       end
 
       context 'greater than zero deposit fee' do
         let(:currency) do
-          Currency.find(:usd).tap{ |c| c.update(deposit_fee: 0.01) }
+          Currency.find(:usd).tap { |c| c.update(deposit_fee: 0.01) }
         end
 
         let(:deposit) do
@@ -90,7 +119,7 @@ describe Deposit do
         end
 
         it 'creates single revenue operation' do
-          expect{ subject.accept! }.to change{ Operations::Revenue.count }.by(1)
+          expect { subject.accept! }.to change { Operations::Revenue.count }.by(1)
         end
 
         it 'credits revenues with fee amount' do
@@ -100,11 +129,11 @@ describe Deposit do
         end
 
         it 'creates revenue from member' do
-          expect{ subject.accept! }.to change{ Operations::Revenue.where(member: member).count }.by(1)
+          expect { subject.accept! }.to change { Operations::Revenue.where(member: member).count }.by(1)
         end
       end
 
-      it 'credits both legacy and operations based member balance' do
+      it 'credits both legacy and operations based member balance for fiat deposit' do
         subject.accept!
 
         %i[main locked].each do |kind|
@@ -115,6 +144,328 @@ describe Deposit do
           )
         end
       end
+
+      context 'coin deposit' do
+        context 'without locked funds' do
+          context 'credits both legacy and operations based member balance for coin deposit' do
+            subject { create(:deposit_btc, amount: 3.7) }
+            it do
+              subject.accept!
+              %i[main locked].each do |kind|
+                expect(
+                  subject.member.balance_for(currency: subject.currency, kind: kind)
+                ).to eq(
+                  subject.member.legacy_balance_for(currency: subject.currency, kind: kind)
+                )
+              end
+
+              expect(subject.member.balance_for(currency: subject.currency, kind: :locked)).to eq 0
+              expect(subject.member.balance_for(currency: subject.currency, kind: :main)).to eq 3.7
+
+              # Transfer funds directly to main account on deposit accepted step (1 liability)
+              liabilities = Operations::Liability.where(currency_id: subject.currency.id, member_id: subject.member.id, reference_type: 'Deposit')
+              expect(liabilities.count).to eq 1
+
+              account = Operations::Account.find_by(kind: :main, currency_type: subject.currency.type, type: 'liability')
+              expect(liabilities.first.code).to eq account.code
+            end
+          end
+        end
+
+        context 'with manual deposit approval' do
+          before { Peatio::App.config.stubs(:manual_deposit_approval).returns(true) }
+          context 'credits both legacy and operations based member balance for coin deposit' do
+            subject { create(:deposit_btc, amount: 3.7) }
+
+            it do
+              subject.accept!
+              %i[main locked].each do |kind|
+                expect(
+                  subject.member.balance_for(currency: subject.currency, kind: kind)
+                ).to eq(
+                  subject.member.legacy_balance_for(currency: subject.currency, kind: kind)
+                )
+              end
+
+              expect(subject.member.balance_for(currency: subject.currency, kind: :locked)).to eq 3.7
+              expect(subject.member.balance_for(currency: subject.currency, kind: :main)).to eq 0
+
+              # Lock funds on deposit accepted step (1 liability)
+              liabilities = Operations::Liability.where(currency_id: subject.currency.id, member_id: subject.member.id, reference_type: 'Deposit')
+              expect(liabilities.count).to eq 1
+
+              account = Operations::Account.find_by(kind: :locked, currency_type: subject.currency.type, type: 'liability', scope: 'member')
+              expect(liabilities.first.code).to eq account.code
+            end
+          end
+        end
+
+        context 'with locked funds' do
+          before { Peatio::App.config.stubs(:deposit_funds_locked).returns(true) }
+          context 'credits both legacy and operations based member balance for coin deposit' do
+            subject { create(:deposit_btc, amount: 3.7) }
+
+            it do
+              subject.accept!
+              %i[main locked].each do |kind|
+                expect(
+                  subject.member.balance_for(currency: subject.currency, kind: kind)
+                ).to eq(
+                  subject.member.legacy_balance_for(currency: subject.currency, kind: kind)
+                )
+              end
+
+              expect(subject.member.balance_for(currency: subject.currency, kind: :locked)).to eq 3.7
+              expect(subject.member.balance_for(currency: subject.currency, kind: :main)).to eq 0
+
+              # Lock funds on deposit accepted step (1 liability)
+              liabilities = Operations::Liability.where(currency_id: subject.currency.id, member_id: subject.member.id, reference_type: 'Deposit')
+              expect(liabilities.count).to eq 1
+
+              account = Operations::Account.find_by(kind: :locked, currency_type: subject.currency.type, type: 'liability', scope: 'member')
+              expect(liabilities.first.code).to eq account.code
+            end
+          end
+        end
+      end
+    end
+  end
+
+  context :process do
+    context 'fiat deposit' do
+      it 'doesnt process fiat deposit' do
+        deposit.accept!
+        expect(deposit.process!).to eq false
+      end
+    end
+
+    context 'coin deposit' do
+      context 'automatic process' do
+        context 'coin deposit' do
+          subject { create(:deposit_btc, amount: 3.7) }
+          it 'process coin deposit' do
+            crypto_deposit = create(:deposit_btc, amount: 3.7)
+            crypto_deposit.accept!
+            expect(crypto_deposit.process!).to eq true
+            expect(crypto_deposit.processing?).to eq true
+          end
+        end
+      end
+
+      context 'manual process' do
+        before do
+          Peatio::App.config.stubs(:manual_deposit_approval).returns(true)
+        end
+
+        subject { create(:deposit_btc, amount: 3.7) }
+
+        it do
+          subject.accept!
+          subject.process!
+
+          expect(subject.aml_processing?).to eq true
+        end
+      end
+    end
+  end
+
+  context 'process collect' do
+    let(:crypto_deposit) { create(:deposit_btc, amount: 3.7) }
+
+    subject { crypto_deposit }
+
+    context 'with manual deposit approval' do
+      context 'deposit_funds_locked disabled' do
+        before do
+          Peatio::App.config.stubs(:manual_deposit_approval).returns(true)
+          crypto_deposit.accept!
+          crypto_deposit.process!
+        end
+
+        it 'process deposit collection' do
+          crypto_deposit.process_collect!
+
+          expect(crypto_deposit.processing?).to eq true
+
+          %i[main locked].each do |kind|
+            expect(
+              subject.member.balance_for(currency: subject.currency, kind: kind)
+            ).to eq(
+              subject.member.legacy_balance_for(currency: subject.currency, kind: kind)
+            )
+
+            liabilities = Operations::Liability.where(currency_id: subject.currency.id, member_id: subject.member.id)
+            expect(liabilities.count).to eq 3
+
+            # Lock funds on deposit accepted step (1 liability)
+            account = Operations::Account.find_by(kind: :locked, currency_type: subject.currency.type, type: 'liability', scope: 'member')
+            expect(liabilities.first.code).to eq account.code
+
+            # Moved funds from locked to main (2 liabilities)
+            # debit
+            account = Operations::Account.find_by(kind: :locked, currency_type: subject.currency.type, type: 'liability', scope: 'member')
+            expect(liabilities.second.code).to eq account.code
+
+            # credit
+            account = Operations::Account.find_by(kind: :main, currency_type: subject.currency.type, type: 'liability', scope: 'member')
+            expect(liabilities.last.code).to eq account.code
+          end
+        end
+      end
+
+      context 'deposit_funds_locked enabled' do
+        before do
+          Peatio::App.config.stubs(:deposit_funds_locked).returns(true)
+          crypto_deposit.accept!
+          crypto_deposit.process!
+        end
+
+        it 'process deposit collection' do
+          crypto_deposit.process_collect!
+
+          expect(crypto_deposit.processing?).to eq true
+
+          %i[main locked].each do |kind|
+            expect(
+              subject.member.balance_for(currency: subject.currency, kind: kind)
+            ).to eq(
+              subject.member.legacy_balance_for(currency: subject.currency, kind: kind)
+            )
+          end
+
+          expect(subject.member.balance_for(currency: subject.currency, kind: :locked)).to eq 3.7
+          expect(subject.member.balance_for(currency: subject.currency, kind: :main)).to eq 0
+
+          # Lock funds on deposit accepted step (1 liability)
+          liabilities = Operations::Liability.where(currency_id: subject.currency.id, member_id: subject.member.id, reference_type: 'Deposit')
+          expect(liabilities.count).to eq 1
+
+          account = Operations::Account.find_by(kind: :locked, currency_type: subject.currency.type, type: 'liability', scope: 'member')
+          expect(liabilities.first.code).to eq account.code
+        end
+      end
+    end
+  end
+
+  context :processing do
+    let(:crypto_deposit) { create(:deposit_btc, amount: 3.7) }
+
+    before do
+      Peatio::App.config.stubs(:deposit_funds_locked).returns(true)
+      crypto_deposit.accept!
+      crypto_deposit.process!
+    end
+
+    subject { crypto_deposit }
+
+    it 'commit deposit to collected' do
+      # Minus locked and plus main accounts
+      expect { subject.dispatch! }.to change { Operations::Liability.count }.by(2)
+
+      %i[main locked].each do |kind|
+        expect(
+          subject.member.balance_for(currency: subject.currency, kind: kind)
+        ).to eq(
+          subject.member.legacy_balance_for(currency: subject.currency, kind: kind)
+        )
+      end
+      expect(crypto_deposit.aasm_state).to eq('collected')
+    end
+
+    it 'dispatch deposit to skipped' do
+      # Minus locked and plus main accounts
+      expect { subject.skip! }.to change { Operations::Liability.count }.by(0)
+
+      %i[main locked].each do |kind|
+        expect(
+          subject.member.balance_for(currency: subject.currency, kind: kind)
+        ).to eq(
+          subject.member.legacy_balance_for(currency: subject.currency, kind: kind)
+        )
+      end
+      expect(crypto_deposit.aasm_state).to eq('skipped')
+    end
+  end
+
+  context :dispatch do
+    let(:crypto_deposit) { create(:deposit_btc, amount: 3.7) }
+
+    subject { crypto_deposit }
+
+    context 'with locked funds' do
+      before do
+        Peatio::App.config.stubs(:deposit_funds_locked).returns(true)
+        crypto_deposit.accept!
+        crypto_deposit.process!
+      end
+
+      it 'dispatches deposit' do
+        subject.dispatch!
+
+        %i[main locked].each do |kind|
+          expect(
+            subject.member.balance_for(currency: subject.currency, kind: kind)
+          ).to eq(
+            subject.member.legacy_balance_for(currency: subject.currency, kind: kind)
+          )
+
+          liabilities = Operations::Liability.where(currency_id: subject.currency.id, member_id: subject.member.id)
+          expect(liabilities.count).to eq 3
+
+          # Lock funds on deposit accepted step (1 liability)
+          account = Operations::Account.find_by(kind: :locked, currency_type: subject.currency.type, type: 'liability', scope: 'member')
+          expect(liabilities.first.code).to eq account.code
+
+          # Moved funds from locked to main (2 liabilities)
+          # debit
+          account = Operations::Account.find_by(kind: :locked, currency_type: subject.currency.type, type: 'liability', scope: 'member')
+          expect(liabilities.second.code).to eq account.code
+
+          # credit
+          account = Operations::Account.find_by(kind: :main, currency_type: subject.currency.type, type: 'liability', scope: 'member')
+          expect(liabilities.last.code).to eq account.code
+        end
+      end
+    end
+
+    context 'without locked funds' do
+      before do
+        crypto_deposit.accept!
+        crypto_deposit.process!
+      end
+
+      it 'dispatches deposit' do
+        subject.dispatch!
+
+        %i[main locked].each do |kind|
+          expect(
+            subject.member.balance_for(currency: subject.currency, kind: kind)
+          ).to eq(
+            subject.member.legacy_balance_for(currency: subject.currency, kind: kind)
+          )
+
+          # There is only one liability with transferring funds directly to main account
+          liabilities = Operations::Liability.where(currency_id: subject.currency.id, member_id: subject.member.id, reference_type: 'Deposit')
+          expect(liabilities.count).to eq 1
+
+          account = Operations::Account.find_by(kind: :main, currency_type: subject.currency.type, type: 'liability')
+          expect(account.code).to eq liabilities.first.code
+        end
+      end
+    end
+  end
+
+  context :err do
+    let(:crypto_deposit) { create(:deposit_btc, amount: 3.7) }
+
+    subject { crypto_deposit }
+    it 'transitions to :errored after calling #err!' do
+      subject.accept!
+      subject.process!
+      subject.err! StandardError.new "This is an exception"
+
+      expect(subject.errored?).to be true
+      expect(subject.error).to eq [{"class"=>"StandardError", "message"=>"This is an exception"}]
     end
   end
 end

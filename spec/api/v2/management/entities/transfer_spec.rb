@@ -3,11 +3,13 @@
 
 describe API::V2::Management::Entities::Transfer do
   let(:record) { create(:transfer) }
-  subject { OpenStruct.new API::V2::Management::Entities::Transfer.represent(record).serializable_hash }
+  subject { OpenStruct.new API::V2::Management::Entities::Transfer.represent(record.reload).serializable_hash }
 
-  it { expect(subject.key).to eq record.key }
-  it { expect(subject.kind).to eq record.kind }
-  it { expect(subject.desc).to eq record.desc }
+  it do
+    expect(subject.key).to eq record.key
+    expect(subject.category).to eq record.category
+    expect(subject.description).to eq record.description
+  end
 
   context 'with operations' do
     let(:record) { create(:transfer_with_operations) }
@@ -19,25 +21,25 @@ describe API::V2::Management::Entities::Transfer do
 
     it do
       record_assets = API::V2::Management::Entities::Operation
-                        .represent(record.assets)
+                        .represent(record.reload.assets)
       expect(subject.assets.to_json).to eq record_assets.to_json
     end
 
     it do
       record_expenses = API::V2::Management::Entities::Operation
-                          .represent(record.expenses)
+                          .represent(record.reload.expenses)
       expect(subject.expenses.to_json).to eq record_expenses.to_json
     end
 
     it do
       record_liabilities = API::V2::Management::Entities::Operation
-                             .represent(record.liabilities)
+                             .represent(record.reload.liabilities)
       expect(subject.liabilities.to_json).to eq record_liabilities.to_json
     end
 
     it do
       record_revenues = API::V2::Management::Entities::Operation
-                             .represent(record.revenues)
+                             .represent(record.reload.revenues)
       expect(subject.revenues.to_json).to eq record_revenues.to_json
     end
   end

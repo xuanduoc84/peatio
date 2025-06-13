@@ -30,7 +30,7 @@ module API
             desc: 'Member accounts.'
           }
         ) do |m|
-            m.accounts.enabled.includes(:currency)
+            m.accounts.includes(:currency)
           end
       end
     end

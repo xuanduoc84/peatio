@@ -23,8 +23,8 @@ describe API::V2::Management::Withdraws, type: :request do
     before do
       Withdraw::STATES.tap do |states|
         (states.count * 2).times do
-          create(:btc_withdraw, member: members.sample, aasm_state: states.sample, rid: Faker::Blockchain::Bitcoin.address)
-          create(:usd_withdraw, member: members.sample, aasm_state: states.sample, rid: Faker::Bank.iban)
+          create(:btc_withdraw, :with_deposit_liability, sum: 1, member: members.sample, aasm_state: states.sample, rid: Faker::Blockchain::Bitcoin.address)
+          create(:usd_withdraw, :with_deposit_liability, sum: 1, member: members.sample, aasm_state: states.sample, rid: Faker::Bank.iban)
         end
       end
     end
@@ -47,7 +47,7 @@ describe API::V2::Management::Withdraws, type: :request do
       data.merge!(currency: :usd)
       request
       expect(response).to have_http_status(200)
-      expect(JSON.parse(response.body).count).to eq Withdraw.with_currency(:usd).count
+      expect(JSON.parse(response.body).count).to eq Withdraw.where(currency_id: :usd).count
     end
 
     it 'filters by state' do
@@ -84,10 +84,10 @@ describe API::V2::Management::Withdraws, type: :request do
     let :data do
       { uid:      member.uid,
         currency: currency.code,
-        amount:   amount,
+        amount:   amount.to_s,
         rid:      Faker::Blockchain::Bitcoin.address }
     end
-    let(:account) { member.accounts.with_currency(currency).first }
+    let(:account) { member.get_account(currency) }
     let(:balance) { 1.2 }
     before { account.plus_funds(balance) }
 
@@ -97,11 +97,100 @@ describe API::V2::Management::Withdraws, type: :request do
         expect(response).to have_http_status(201)
         record = Withdraw.find_by_tid!(JSON.parse(response.body).fetch('tid'))
         expect(record.sum).to eq 0.1575
-        expect(record.aasm_state).to eq 'submitted'
+        expect(record.aasm_state).to eq 'accepted'
         expect(record.rid).to eq data[:rid]
         expect(record.account).to eq account
         expect(record.account.balance).to eq (1.2 - amount)
         expect(record.account.locked).to eq amount
+        expect(response_body['transfer_type']).to eq 'crypto'
+      end
+
+      context 'disabled currency' do
+        before do
+          currency.update(withdrawal_enabled: false)
+        end
+
+        it 'returns error for disabled withdrawal' do
+          request
+          expect(response).to have_http_status(422)
+          expect(response).to include_api_error('management.currency.withdrawal_disabled')
+        end
+      end
+
+      context 'withdrawal with beneficiary' do
+        let(:beneficiary) { create(:beneficiary, state: :active, currency: currency) }
+        let(:data) do
+          { uid:            member.uid,
+            currency:       currency.code,
+            amount:         amount.to_s,
+            additional_fee: true,
+            beneficiary_id: beneficiary.id }
+        end
+
+        it 'creates new withdraw and immediately submits it' do
+          request
+          expect(response).to have_http_status(201)
+          record = Withdraw.find_by_tid!(JSON.parse(response.body).fetch('tid'))
+          new_amount = currency.withdraw_fee + data[:amount].to_d
+          expect(record.sum).to eq new_amount
+          expect(record.aasm_state).to eq 'accepted'
+          expect(record.rid).to eq beneficiary.rid
+          expect(record.account).to eq account
+          expect(record.account.balance).to eq (1.2 - new_amount)
+          expect(record.account.locked).to eq new_amount
+        end
+
+        context 'pending beneficiary' do
+          before do
+            beneficiary.update(state: :pending)
+          end
+
+          it 'returns error for pending beneficiary' do
+            request
+            expect(response).to have_http_status(422)
+            expect(response).to include_api_error('management.beneficiary.invalid_state_for_withdrawal')
+          end
+        end
+
+        context 'withdrawal with note' do
+          let(:member) { create(:member, :barong) }
+          let(:currency) { Currency.find(:btc) }
+          let(:amount) { 0.1575 }
+          let(:signers) { %i[alex jeff] }
+          let :data do
+            { uid:      member.uid,
+              currency: currency.code,
+              amount:   amount.to_s,
+              rid:      Faker::Blockchain::Bitcoin.address,
+              note:     'Withdraw money'
+            }
+          end
+
+          it 'returns new withdraw with correct note' do
+            request
+            expect(JSON.parse(response.body)['note']).to eq 'Withdraw money'
+          end
+        end
+
+        context 'withdrawal with transfer_type' do
+          let(:member) { create(:member, :barong) }
+          let(:currency) { Currency.find(:btc) }
+          let(:amount) { 0.1575 }
+          let(:signers) { %i[alex jeff] }
+          let :data do
+            { uid:      member.uid,
+              currency: currency.code,
+              amount:   amount.to_s,
+              rid:      Faker::Blockchain::Bitcoin.address,
+              transfer_type:   'card'
+            }
+          end
+
+          it 'returns new withdraw with correct transfer_type' do
+            request
+            expect(JSON.parse(response.body)['transfer_type']).to eq 'card'
+          end
+        end
       end
 
       context 'action: :process' do
@@ -111,7 +200,7 @@ describe API::V2::Management::Withdraws, type: :request do
           expect(response).to have_http_status(201)
           record = Withdraw.find_by_tid!(JSON.parse(response.body).fetch('tid'))
           expect(record.sum).to eq 0.1575
-          expect(record.aasm_state).to eq 'submitted'
+          expect(record.aasm_state).to eq 'accepted'
           expect(record.rid).to eq data[:rid]
           expect(record.account).to eq account
           expect(record.account.balance).to eq (1.2 - amount)
@@ -122,7 +211,7 @@ describe API::V2::Management::Withdraws, type: :request do
       context 'invalid withdraw' do
         before do
           data[:action] = :process
-          data[:amount] = 1000
+          data[:amount] = '1000'
         end
         it 'validates enough balance' do
           request
@@ -154,7 +243,7 @@ describe API::V2::Management::Withdraws, type: :request do
         expect(response).to have_http_status(201)
         expect(account.reload.balance).to eq(15)
         expect(account.reload.locked).to eq 5
-        expect(Withdraw.last.aasm_state).to eq 'submitted'
+        expect(Withdraw.last.aasm_state).to eq 'accepted'
       end
 
       context 'action: :process' do
@@ -177,7 +266,7 @@ describe API::V2::Management::Withdraws, type: :request do
 
     let(:signers) { %i[alex jeff] }
     let(:data) { { tid: record.tid } }
-    let(:record) { create(:btc_withdraw, member: member) }
+    let(:record) { create(:btc_withdraw, :with_deposit_liability, member: member) }
     let(:member) { create(:member, :barong) }
 
     it 'returns withdraw by TID' do
@@ -196,8 +285,8 @@ describe API::V2::Management::Withdraws, type: :request do
     let(:amount) { 160.79 }
     let(:signers) { %i[alex jeff] }
     let(:data) { { tid: record.tid } }
-    let(:account) { member.accounts.with_currency(currency).first }
-    let(:record) { "Withdraws::#{currency.type.camelize}".constantize.create!(member: member, account: account, sum: amount, rid: Faker::Bank.iban, currency: currency) }
+    let(:account) { member.get_account(currency) }
+    let(:record) { "Withdraws::#{currency.type.camelize}".constantize.create!(member: member, sum: amount, rid: Faker::Bank.iban, currency: currency) }
     let(:balance) { 800.77 }
     before { account.plus_funds(balance) }
 
@@ -214,26 +303,26 @@ describe API::V2::Management::Withdraws, type: :request do
           request
           expect(response).to have_http_status(200)
           record = Withdraw.find_by_tid!(JSON.parse(response.body).fetch('tid'))
-          expect(record.aasm_state).to eq 'submitted'
+          expect(record.aasm_state).to eq 'accepted'
           expect(record.account.balance).to eq (balance - amount)
           expect(record.account.locked).to eq amount
         end
 
         it 'processes submitted withdraws' do
-          record.submit!
-          expect(record.aasm_state).to eq 'submitted'
+          record.accept!
+          expect(record.aasm_state).to eq 'accepted'
           expect(account.reload.balance).to eq (balance - amount)
           expect(account.reload.locked).to eq amount
           request
           expect(response).to have_http_status(200)
           record = Withdraw.find_by_tid!(JSON.parse(response.body).fetch('tid'))
-          expect(record.aasm_state).to eq 'submitted'
+          expect(record.aasm_state).to eq 'accepted'
           expect(record.account.balance).to eq (balance - amount)
           expect(record.account.locked).to eq amount
         end
 
         it 'processes accepted withdraws' do
-          record.submit!
+          record.accept!
           record.accept!
           expect(record.aasm_state).to eq 'accepted'
           expect(account.reload.balance).to eq (balance - amount)
@@ -263,8 +352,8 @@ describe API::V2::Management::Withdraws, type: :request do
         end
 
         it 'cancels submitted withdraws' do
-          record.submit!
-          expect(record.aasm_state).to eq 'submitted'
+          record.accept!
+          expect(record.aasm_state).to eq 'accepted'
           expect(account.reload.balance).to eq (balance - amount)
           expect(account.reload.locked).to eq amount
           request
@@ -276,7 +365,7 @@ describe API::V2::Management::Withdraws, type: :request do
         end
 
         it 'cancels accepted withdraws' do
-          record.submit!
+          record.accept!
           record.accept!
           expect(record.aasm_state).to eq 'accepted'
           expect(account.reload.balance).to eq (balance - amount)
@@ -294,7 +383,6 @@ describe API::V2::Management::Withdraws, type: :request do
     context 'fiat withdraws' do
       context 'action: :process' do
         before { data[:action] = :process }
-        before { Withdraw.any_instance.expects(:quick?).returns(true) }
 
         it 'processes prepared withdraws' do
           expect(record.aasm_state).to eq 'prepared'
@@ -308,9 +396,9 @@ describe API::V2::Management::Withdraws, type: :request do
           expect(record.account.locked).to eq 0
         end
 
-        it 'processes submitted withdraws' do
-          record.submit!
-          expect(record.aasm_state).to eq 'submitted'
+        it 'processes accepted withdraws' do
+          record.accept!
+          expect(record.aasm_state).to eq 'accepted'
           expect(account.reload.balance).to eq (balance - amount)
           expect(account.reload.locked).to eq amount
           request
@@ -322,7 +410,6 @@ describe API::V2::Management::Withdraws, type: :request do
         end
 
         it 'processes accepted withdraws' do
-          record.submit!
           record.accept!
           expect(record.aasm_state).to eq 'accepted'
           expect(account.reload.balance).to eq (balance - amount)
@@ -351,9 +438,9 @@ describe API::V2::Management::Withdraws, type: :request do
           expect(record.account.locked).to eq 0
         end
 
-        it 'cancels submitted withdraws' do
-          record.submit!
-          expect(record.aasm_state).to eq 'submitted'
+        it 'cancels accepted withdraws' do
+          record.accept!
+          expect(record.aasm_state).to eq 'accepted'
           expect(account.reload.balance).to eq (balance - amount)
           expect(account.reload.locked).to eq amount
           request
@@ -365,7 +452,7 @@ describe API::V2::Management::Withdraws, type: :request do
         end
 
         it 'cancels accepted withdraws' do
-          record.submit!
+          record.accept!
           record.accept!
           expect(record.aasm_state).to eq 'accepted'
           expect(account.reload.balance).to eq (balance - amount)

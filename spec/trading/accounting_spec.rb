@@ -40,12 +40,15 @@ describe 'Accounting' do
     ask = Matching::LimitOrder.new(order_ask.to_matching_attributes)
     bid = Matching::LimitOrder.new(order_bid.to_matching_attributes)
     Matching::Executor.new \
-      market_id:    :btcusd,
-      ask_id:       ask.id,
-      bid_id:       bid.id,
-      strike_price: '1.2',
-      volume:       '10000',
-      funds:        '12000'
+      action: 'execute',
+      trade: {
+        market_id:       :btcusd,
+        maker_order_id:  ask.id,
+        taker_order_id:  bid.id,
+        strike_price:    '1.2',
+        amount:          '10000',
+        total:           '12000'
+      }
   end
 
   let(:asset_balance) { Operations::Asset.balance }
@@ -55,6 +58,8 @@ describe 'Accounting' do
 
   before do
     deposit_btc.accept!
+    deposit_btc.process!
+    deposit_btc.dispatch!
     deposit_usd.accept!
 
     order_bid.hold_account!.lock_funds!(order_bid.locked)
@@ -78,10 +83,9 @@ describe 'Accounting' do
   end
 
   context 'withdraws' do
-    let(:btc_withdraw) { create(:new_btc_withdraw, sum: 1000.to_d, member: buyer ) }
+    let(:btc_withdraw) { create(:btc_withdraw, sum: 1000.to_d, member: buyer ) }
 
     before do
-      btc_withdraw.submit!
       btc_withdraw.accept!
       btc_withdraw.update(txid: 'a1a43ab7166f81059449f80a35abdc6febe62fe1f75a0cdb25d49ebae3fc10d9')
       btc_withdraw.process!

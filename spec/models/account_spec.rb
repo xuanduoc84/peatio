@@ -54,15 +54,6 @@ describe Account do
     end
   end
 
-  describe '#payment_address' do
-    it { expect(subject.payment_address).not_to be_nil }
-    it { expect(subject.payment_address).to be_is_a(PaymentAddress) }
-    context 'fiat currency' do
-      subject { create_account(:usd).payment_address }
-      it { is_expected.to be_nil }
-    end
-  end
-
   describe 'concurrent lock_funds' do
     it 'should raise error on the second lock_funds' do
       account1 = Account.find subject.id
@@ -77,38 +68,25 @@ describe Account do
         ActiveRecord::Base.transaction do
           account2.lock_funds(8)
         end
-      end.to raise_error(Account::AccountError) { |e| expect(e.message).to eq 'Cannot lock funds (amount: 8).' }
+      end.to raise_error(Account::AccountError) { |e| expect(e.message).to eq "Cannot lock funds (member id: #{subject.member_id}, currency id: #{subject.currency_id}, amount: 8, balance: 2.0, locked: 18.0)." }
 
       expect(subject.reload.balance).to eq 2.to_d
     end
   end
 
-  describe '.enabled' do
+  describe '.visible' do
     before do
       create_account(:usd)
       create_account(:btc)
-      create_account(:dash)
+      create_account(:eth)
     end
 
-    it 'returns the accounts with currency enabled' do
-      currency = Currency.find(:dash)
+    it 'returns the accounts with currency visible' do
+      currency = Currency.find(:eth)
       currency.transaction do
-        currency.update_columns(enabled: false)
-        expect(Account.enabled.count).to eq 24
-        currency.update_columns(enabled: true)
-      end
-    end
-  end
-
-  describe '#payment_address!' do
-    it 'returns the same payment address is address generation process is in progress' do
-      expect(subject.payment_address!).to eq subject.payment_address
-    end
-
-    it 'return new payment address if previous has address generated' do
-      subject.payment_address.tap do |previous|
-        previous.update!(address: '1JSmYcCjBGm7RbjPppjZ1gGTDpBEmTGgGA')
-        expect(subject.payment_address!).not_to eq previous
+        # We have created 3 account.
+        expect{ currency.update_columns(visible: false) }.to change { Account.visible.count }.by(-1)
+        currency.update_columns(visible: true)
       end
     end
   end
